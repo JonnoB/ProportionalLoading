@@ -1,0 +1,34 @@
+---
+title: "Proportional Loading"
+author: "Jonathan Bourne"
+date: "14 February 2018"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+This script is for the PhD chapter/paper on proportional grid loading.
+
+The goal of this paper is to compare real and proportional line limits and see what affect this has on cascading failures in the power-grid during attack.
+
+
+
+
+#Tweaking the package
+The below code is used to tweak the R package, add to the documentation etc, etc
+
+```{r}
+library(devtools)
+library(roxygen2)
+setwd(file.path(getwd(), "PowerGridNetworking"))
+document()
+```
+
+
+```{r}
+setwd("/home/jonno")
+
+install("PowerGridNetworking")
+
+```
+
