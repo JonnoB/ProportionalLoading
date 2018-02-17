@@ -11,7 +11,147 @@ This script is for the PhD chapter/paper on proportional grid loading.
 
 The goal of this paper is to compare real and proportional line limits and see what affect this has on cascading failures in the power-grid during attack.
 
+#Setup Block
 
+
+```{r}
+packages <- c("tidyverse", "igraph","readr","readxl", "broom", "zoo", "stringr","foreach", "doMC",  "xtable", "geomnet", "ggnetwork", "rlang", "animation", "ggridges", "poweRlaw")
+
+new.packages <- packages[!(packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+
+
+lapply(packages, library, character.only = TRUE)
+library(PowerGridNetworking)
+
+select <- dplyr::select
+
+#Set up file system to read the correct folders this switches between aws and windows mode
+
+basewd <- "/home/jonno/Dropbox/Jonathan_Bourne_Phd_Folder"
+datafile <- "/home/jonno/Dropbox/Jonathan_Bourne_Phd_Folder/ETYSAppendixB"
+LatexFolder <- "/home/jonno/Dropbox/Apps/ShareLaTeX/Method outline" 
+FiguresFolder <- file.path(LatexFolder, "Figures")
+TablesFolder <- file.path(LatexFolder, "Tables")
+MatricesFolder <- file.path(LatexFolder, "Matrices")
+Functions <-"/home/jonno/Create_ETYS_network/Functions"
+Tariff <- file.path(basewd,"Tariff and Transport")
+
+source("/home/jonno/Create_ETYS_network/SubCode/LoadData2.R")
+```
+
+
+#Generate networks
+```{r}
+test <- RandomAttack(gbase, Number = length(V(gbase)))
+
+
+
+MultiAttackOrder <- function(g, Sims){
+Out <- 1:Sims %>%
+  map(~{
+    AttackOrder <- RandomAttack(g, Number = length(V(g))) 
+    df <- AttackOrder%>%
+      as.matrix() %>% 
+      t %>%
+      as_tibble() %>%
+      setNames(., paste0("Target_", 1:length(AttackOrder)))
+  return(df)
+  }) %>%
+  bind_rows() %>%
+  mutate(SimulationID = paste0("Simulation_ID_", 1:nrow(.))) %>%
+  select(SimulationID, everything())
+return(Out)
+}
+
+SimOrder <- AttackOrderMatrix(gbase, 100)
+
+folder <- "/home/jonno/ProportionalLoading/test"
+
+GenerateAttackOrder <- function(SimOrder, folder){
+  
+  CurrentSims <- list.files(folder) %>%
+  str_replace_all(., "\\D", "" )
+  
+  NeededSims <- SimOrder$SimulationID %>%
+  str_replace_all(., pattern ="\\D", "" ) %>%
+    as.numeric()
+  
+  #The simulations still required in current run.
+NeededSims2 <- NeededSims[!(NeededSims %in% CurrentSims)]
+
+#The deletion order of the lowest simulation not yet completed.
+SimOrder %>%
+filter(SimulationID == paste0("Simulation_ID_", min(NeededSims2))) %>%
+  select(-SimulationID) %>%
+  t
+}
+
+test <- GenerateAttackOrder(SimOrder, folder)
+
+
+MultiAttack2 <- function(SimOrder, folder, g, ){
+  
+}
+
+
+```
+
+```{r}
+AttackVectors <- MultiAttackOrder(gbase, 10)
+setwd(basewd)
+folder <- "TestMulti"
+dir.create(folder)
+
+#Ensure there is powerflow
+g <- PowerFlow(gbase, "FECK40")
+
+#set working directory
+
+1:nrow(AttackVectors) %>% walk(~{
+
+  NextSim <- NextAttackSimulation(AttackVectors, folder)
+  DeletionOrder <- GenerateAttackOrder(AttackVectors, folder)
+
+  FixedNodes <- quo(FixedStrategyAttack(g, DeletionOrder))
+
+  AttackSeries <- AttackTheGrid(list(list(g)), FixedNodes, MinMaxComp = 0, TotalAttackRounds = 10, CascadeMode = FALSE)
+
+  saveRDS(AttackSeries, file = file.path(folder, paste0(NextSim, ".rds")))
+  }
+)
+
+SaveMultiAttacks <- function(g, AttackVectors, folder, MinMaxComp = 0, TotalAttackRounds = 10, CascadeMode = FALSE){
+  g <- PowerFlow(g, "FECK40")
+
+#set working directory
+
+  1:nrow(AttackVectors) %>% walk(~{
+
+    NextSim <- NextAttackSimulation(AttackVectors, folder)
+    DeletionOrder <- GenerateAttackOrder(AttackVectors, folder)
+
+    FixedNodes <- quo(FixedStrategyAttack(g, DeletionOrder))
+
+    AttackSeries <- AttackTheGrid(list(list(g)), FixedNodes, MinMaxComp, TotalAttackRounds, CascadeMode= F)
+
+    saveRDS(AttackSeries, file = file.path(folder, paste0(NextSim, ".rds")))
+    }
+   )
+}
+
+#There is some problem here that is not  problem on the code but is in the function not sure what though
+SaveMultiAttacks(gbase, AttackVectors, folder, CascadeMode = F)
+
+AttackStrategy <- FixedNodes
+
+```
+
+
+
+#Construct attack summaries
+
+#Analyse results
 
 
 #Tweaking the package
@@ -20,8 +160,11 @@ The below code is used to tweak the R package, add to the documentation etc, etc
 ```{r}
 library(devtools)
 library(roxygen2)
-setwd(file.path(getwd(), "PowerGridNetworking"))
+setwd( "/home/jonno/PowerGridNetworking")
 document()
+setwd("/home/jonno")
+install("PowerGridNetworking")
+library(PowerGridNetworking)
 ```
 
 
