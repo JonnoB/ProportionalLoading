@@ -36,120 +36,90 @@ TablesFolder <- file.path(LatexFolder, "Tables")
 MatricesFolder <- file.path(LatexFolder, "Matrices")
 Functions <-"/home/jonno/Create_ETYS_network/Functions"
 Tariff <- file.path(basewd,"Tariff and Transport")
+PLwd <- "/media/jonno/Seagate Expansion Drive/ProportionalLoading"
 
 source("/home/jonno/Create_ETYS_network/SubCode/LoadData2.R")
-```
-
-
-#Generate networks
-```{r}
-test <- RandomAttack(gbase, Number = length(V(gbase)))
-
-
-
-MultiAttackOrder <- function(g, Sims){
-Out <- 1:Sims %>%
-  map(~{
-    AttackOrder <- RandomAttack(g, Number = length(V(g))) 
-    df <- AttackOrder%>%
-      as.matrix() %>% 
-      t %>%
-      as_tibble() %>%
-      setNames(., paste0("Target_", 1:length(AttackOrder)))
-  return(df)
-  }) %>%
-  bind_rows() %>%
-  mutate(SimulationID = paste0("Simulation_ID_", 1:nrow(.))) %>%
-  select(SimulationID, everything())
-return(Out)
-}
-
-SimOrder <- AttackOrderMatrix(gbase, 100)
-
-folder <- "/home/jonno/ProportionalLoading/test"
-
-GenerateAttackOrder <- function(SimOrder, folder){
-  
-  CurrentSims <- list.files(folder) %>%
-  str_replace_all(., "\\D", "" )
-  
-  NeededSims <- SimOrder$SimulationID %>%
-  str_replace_all(., pattern ="\\D", "" ) %>%
-    as.numeric()
-  
-  #The simulations still required in current run.
-NeededSims2 <- NeededSims[!(NeededSims %in% CurrentSims)]
-
-#The deletion order of the lowest simulation not yet completed.
-SimOrder %>%
-filter(SimulationID == paste0("Simulation_ID_", min(NeededSims2))) %>%
-  select(-SimulationID) %>%
-  t
-}
-
-test <- GenerateAttackOrder(SimOrder, folder)
-
-
-MultiAttack2 <- function(SimOrder, folder, g, ){
-  
-}
-
 
 ```
 
+#Create the Attack Orders
 ```{r}
-AttackVectors <- MultiAttackOrder(gbase, 10)
-setwd(basewd)
-folder <- "TestMulti"
-dir.create(folder)
+#Set the path to a large enough storage
+setwd(PLwd)
 
 #Ensure there is powerflow
 g <- PowerFlow(gbase, "FECK40")
 
-#set working directory
+AttackRounds <- 150
 
-1:nrow(AttackVectors) %>% walk(~{
-
-  NextSim <- NextAttackSimulation(AttackVectors, folder)
-  DeletionOrder <- GenerateAttackOrder(AttackVectors, folder)
-
-  FixedNodes <- quo(FixedStrategyAttack(g, DeletionOrder))
-
-  AttackSeries <- AttackTheGrid(list(list(g)), FixedNodes, MinMaxComp = 0, TotalAttackRounds = 10, CascadeMode = FALSE)
-
-  saveRDS(AttackSeries, file = file.path(folder, paste0(NextSim, ".rds")))
-  }
-)
-
-SaveMultiAttacks <- function(g, AttackVectors, folder, MinMaxComp = 0, TotalAttackRounds = 10, CascadeMode = FALSE){
-  g <- PowerFlow(g, "FECK40")
-
-#set working directory
-
-  1:nrow(AttackVectors) %>% walk(~{
-
-    NextSim <- NextAttackSimulation(AttackVectors, folder)
-    DeletionOrder <- GenerateAttackOrder(AttackVectors, folder)
-
-    FixedNodes <- quo(FixedStrategyAttack(g, DeletionOrder))
-
-    AttackSeries <- AttackTheGrid(list(list(g)), FixedNodes, MinMaxComp, TotalAttackRounds, CascadeMode= F)
-
-    saveRDS(AttackSeries, file = file.path(folder, paste0(NextSim, ".rds")))
-    }
-   )
+#Create a reproducible attack order
+seed<- 1589
+filename <- "DeleteOrders100.rds"
+if(file.exists(filename)){
+  DeleteOrders <- readRDS(filename)
+} else {
+set.seed(seed)
+DeleteOrders <- MultiAttackOrder(gbase, 100)  
+saveRDS(DeleteOrders, filename)
 }
+```
 
-#There is some problem here that is not  problem on the code but is in the function not sure what though
-SaveMultiAttacks(gbase, AttackVectors, folder, CascadeMode = F)
 
-AttackStrategy <- FixedNodes
+#Perform Random attack on real line limits
+
+```{r}
+folder <- "Random100"
+
+  if(!file.exists(folder)){
+    dir.create(folder)
+  }
+
+SaveMultiAttacks(g, DeleteOrders, folder, TotalAttackRounds = AttackRounds, CascadeMode = T)
 
 ```
 
 
+#Generate PL networks
+
+This function saves networks.
+Should the function should be changed so that it can handle edges as well as nodes.
+
+```{r}
+#The vector of alpha values to be tested
+alpha_vector <- c(1.05, 1.1, 1.2, 1.5, 2, 3, 5)
+
+#Create the simulations for each of the alpha avalues using 100 simulations for each
+alpha_vector %>% walk(~{
+  g2 <- Proportional_Load(g, alpha = .x)
+  
+  folder <- paste0("alpha_value_", .x*100)
+  #create folder if it doesn't already exist
+  if(!file.exists(folder)){
+    dir.create(folder)
+  }
+  
+  SaveMultiAttacks(g2, DeleteOrders, folder, TotalAttackRounds = AttackRounds, CascadeMode = T)
+  
+}
+  
+)
+  
+
+```
+
 
 #Construct attack summaries
+
+```{r}
+testfolder <- "/media/jonno/Seagate Expansion Drive/ProportionalLoading/alpha_value_105"
+
+test <- list.files(testfolder) %>% 
+  map_df(~readRDS(file.path(testfolder, .)) %>%
+ExtractNetworkStats())
+```
+
+
+
 
 #Analyse results
 
@@ -165,6 +135,7 @@ document()
 setwd("/home/jonno")
 install("PowerGridNetworking")
 library(PowerGridNetworking)
+
 ```
 
 
