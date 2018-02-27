@@ -68,7 +68,7 @@ saveRDS(DeleteOrders, filename)
 #Perform Random attack on real line limits
 
 ```{r}
-folder <- "Random100"
+folder <- "Real_Limits"
 
   if(!file.exists(folder)){
     dir.create(folder)
@@ -85,25 +85,68 @@ This function saves networks.
 Should the function should be changed so that it can handle edges as well as nodes.
 
 ```{r}
+
 #The vector of alpha values to be tested
-alpha_vector <- c(1.05, 1.1, 1.2, 1.5, 2, 3, 5)
+#alpha_vector <- c(1.05, 1.1, 1.2, 1.5, 2, 3, 5)
+alpha_vector <- c( 5)
 
 #Create the simulations for each of the alpha avalues using 100 simulations for each
 alpha_vector %>% walk(~{
-  g2 <- Proportional_Load(g, alpha = .x)
+  gProp <- Proportional_Load(g, alpha = .x)
   
-  folder <- paste0("alpha_value_", .x*100)
+  folder <- paste0("alpha_value_",  .x*100)
   #create folder if it doesn't already exist
   if(!file.exists(folder)){
     dir.create(folder)
   }
   
-  SaveMultiAttacks(g2, DeleteOrders, folder, TotalAttackRounds = AttackRounds, CascadeMode = T)
+  SaveMultiAttacks(gProp, DeleteOrders, folder, TotalAttackRounds = AttackRounds, CascadeMode = T)
   
 }
   
 )
   
+```
+
+#Extracting stats
+
+Extracting stats is slow this extracts thhe stats and saves them as a file.
+
+```{r}
+Propfolder <- "/media/jonno/Seagate Expansion Drive/ProportionalLoading"
+
+
+Sim_summary <- list.files(Propfolder, patter = "(alpha)|(Random)") %>% 
+  file.path(Propfolder,.) %>% map_df(~{
+    
+    rootfolder <- .x
+    targetfolder <- basename(.x)
+    
+    if(!file.exists(paste0(targetfolder, ".rds"))){
+      
+      print(paste("Extracting summary data for", targetfolder))
+      
+      summarydata <-list.files( rootfolder) %>% 
+          map_df(~read_rds(file.path(rootfolder, .x)) %>%
+                   ExtractNetworkStats()) %>%
+          mutate(Cascade = TRUE, 
+                 alpha = targetfolder,
+                 simulationID = .x)
+      savename <-paste0(targetfolder, ".rds")
+      
+      saveRDS(summarydata, savename)  
+      
+      print(paste("File", savename, "saved"))
+      
+    } else {print(paste("saved file for" , targetfolder, "exists"))}
+  
+    }
+  )
+
+#temp fix needs to be done properly
+AttackRoundData <- list.files(pattern = ".rds")[-8] %>%
+  map_df(~read_rds(.x))
+
 
 ```
 
@@ -111,14 +154,124 @@ alpha_vector %>% walk(~{
 #Construct attack summaries
 
 ```{r}
-testfolder <- "/media/jonno/Seagate Expansion Drive/ProportionalLoading/alpha_value_105"
+SummariseMonteCarlo <- function(df){
+ df %>% 
+    mutate(PGfract = (max(PowerGen)- PowerGen)/max(PowerGen)) %>%
+    group_by(NodesAttacked, alpha) %>%
+    summarise(mean = mean(GCfract),
+              sd = sd(GCfract),
+              GC95 = quantile(GCfract, .95),
+              GC05 = quantile(GCfract, .05),
+              count = n(),
+              mPGfract = mean(PGfract),
+              sdPGfract = sd(PGfract),
+              medPGfract = median(PGfract),
+              PG95 = quantile(PGfract, .95),
+              PG05 = quantile(PGfract, .05),
+              PGmax = max(PGfract),
+              PGmin = min(PGfract),
+              mLoad = mean(GridLoading, na.rm = T),
+              GL95 = quantile(GridLoading, .95, na.rm = T),
+              GL05 = quantile(GridLoading, .05, na.rm = T)) %>%
+    ungroup %>%
+    group_by(alpha) %>%
+     mutate(ID =n():1) %>%
+    ungroup
+  
+}
 
-test <- list.files(testfolder) %>% 
-  map_df(~readRDS(file.path(testfolder, .)) %>%
-ExtractNetworkStats())
+
+SummaryofGC<- AttackRoundData %>%
+  SummariseMonteCarlo %>%
+  mutate(PercNum = NodesAttacked/958)
+
+PNodeDens <-  AttackRoundData %>%
+  mutate(PercNum = round(NodesAttacked*100/958),
+            LoadDrop = (first(GridLoading)-GridLoading)/first(GridLoading))
+
+
+SummaryofGC %>%
+    ggplot(aes(x= PercNum, y = mean, colour = alpha)) +geom_line() +
+    geom_ribbon(aes(ymin=GL05, ymax=GL95, fill = Cascade), alpha = 0.3)
+
+
+test2 <- PNodeDens  %>%
+  select(GCfract, Blackout, alpha, PercNum) %>%
+  gather(., key="Type", value = "value",GCfract, Blackout) %>%
+  mutate(Type = ifelse(Type == "GCfract","Giant componant size reduction", "Blackout size"))
+  
+
+ test2   %>%
+  mutate(  PercAttacked= fct_rev(as_factor(paste0(PercNum, "%"))))  %>%
+  ggplot(aes(y = PercAttacked)) +
+  geom_density_ridges(aes(x = value, fill = alpha), alpha = 0.5)  + 
+  scale_x_continuous(labels=scales::percent)  +
+      facet_grid(~Type) +
+  labs(x = "Performance drop", y = "Percent of elements attacked",
+       title = "Change in the performance distribution as number of attacks increase") 
+
+
+ NodeCollapse <- rbind(SummaryofGC %>%
+  select(PercNum, mean, alpha, GC05, GC95, sd) %>% mutate(type = "Giant componant size reduction"),
+SummaryofGC %>% 
+  select(PercNum, mPGfract, alpha, PG05, PG95, sdPGfract) %>% mutate(type = "Blackout size") %>%
+  rename(mean = mPGfract, GC05 = PG05, GC95 = PG95, sd = sdPGfract)
+) %>% mutate(Target = "Node")
+
+ 
+ NodeCollapse %>%
+    ggplot(aes(x= PercNum, y = mean, colour = alpha)) +geom_line() +
+   # geom_ribbon(aes(ymin=GC05, ymax=GC95, fill = alpha), alpha = 0.3) + 
+  scale_x_continuous(labels=scales::percent) + 
+  scale_y_continuous(labels=scales::percent) +
+  facet_grid(~type) +
+  labs(title = "Change in Giant Componant and Blackout size as nodes are attacked" , x = "Percent of elements attacked", y = "Performance drop")
+ 
+ 
+  NodeCollapse %>%
+    ggplot(aes(x= PercNum, y =sd, colour = alpha)) +geom_line() +
+   # geom_ribbon(aes(ymin=GC05, ymax=GC95, fill = alpha), alpha = 0.3) + 
+  scale_x_continuous(labels=scales::percent) + 
+  scale_y_continuous(labels=scales::percent) +
+  facet_grid(~type) +
+  labs(title = "Size of 95-05 confidence interval as attack developes" , x = "Percent of elements attacked", y = "standard deviation")
+ 
 ```
 
 
+
+```{r}
+test <- AttackRoundData %>%
+  filter(alpha=="alpha_value_105")
+#lots of NAs why
+table(is.na(test$GridLoading))
+
+AttackRoundData %>% mutate(NAS = is.na(GridLoading)) %>%
+group_by(alpha)
+
+Sim_summary <- list.files(Propfolder, patter = "(alpha)|(Random)") %>% 
+  file.path(Propfolder,.) %>% map_df(~{
+    
+    rootfolder <- .x
+    targetfolder <- basename(.x)
+
+      
+      print(paste("Extracting summary data for", targetfolder))
+      
+      summarydata <-list.files( rootfolder) %>% 
+          map_df(~read_rds(file.path(rootfolder, .x)) %>%
+                   ExtractNetworkStats()) %>%
+          mutate(Cascade = TRUE, 
+                 alpha = targetfolder,
+                 simulation = .x)
+
+
+  
+    }
+  )
+
+
+```
 
 
 #Analyse results
