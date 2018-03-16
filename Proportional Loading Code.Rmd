@@ -50,7 +50,7 @@ setwd(PLwd)
 #Ensure there is powerflow
 g <- PowerFlow(gbase, "FECK40")
 
-AttackRounds <- 150
+AttackRounds <- 1000
 
 #Create a reproducible attack order
 seed<- 1589
@@ -108,9 +108,30 @@ alpha_vector %>% walk(~{
   
 ```
 
+##Extend the experiment
+This is used to extend the original experiment from 150 node removals to complete collapse
+```{r}
+
+# setwd(PLwd)
+# directories <- list.dirs()
+# 
+# directories[grepl("value_",directories)][-c(1,2,3,4,5,6)] %>% 
+#   walk(~{
+#     setwd(file.path(PLwd, .x))
+#     print(.x)
+#     ExtendMulltiAttack(list.files(), DeleteOrders)
+#     gc()
+#   }
+# )
+
+
+```
+
+
+
 #Extracting stats
 
-Extracting stats is slow this extracts thhe stats and saves them as a file.
+Extracting stats is slow this extracts the stats and saves them as a file.
 
 ```{r}
 Propfolder <- "/media/jonno/Seagate Expansion Drive/ProportionalLoading"
@@ -152,6 +173,8 @@ AttackRoundData <- list.files(pattern = ".rds")[-8] %>%
 
 
 #Construct attack summaries
+
+Plots simple graphs from summary data
 
 ```{r}
 SummariseMonteCarlo <- function(df){
@@ -239,37 +262,58 @@ SummaryofGC %>%
 ```
 
 
+#Deletion similarity
+
+Get the round number that an edge was deleted.
+
 
 ```{r}
-test <- AttackRoundData %>%
-  filter(alpha=="alpha_value_105")
-#lots of NAs why
-table(is.na(test$GridLoading))
-
-AttackRoundData %>% mutate(NAS = is.na(GridLoading)) %>%
-group_by(alpha)
-
-Sim_summary <- list.files(Propfolder, patter = "(alpha)|(Random)") %>% 
-  file.path(Propfolder,.) %>% map_df(~{
     
-    rootfolder <- .x
-    targetfolder <- basename(.x)
-
-      
-      print(paste("Extracting summary data for", targetfolder))
-      
-      summarydata <-list.files( rootfolder) %>% 
-          map_df(~read_rds(file.path(rootfolder, .x)) %>%
-                   ExtractNetworkStats()) %>%
-          mutate(Cascade = TRUE, 
-                 alpha = targetfolder,
-                 simulation = .x)
-
-
+Removeddf <- list.files() %>% map_df(~{
+ file <- .x
+  print(file)
+  read_rds(file ) %>%
+  RoundRemoved()  %>%
+    mutate(Sim = gsub(".rds", "",file))
   
-    }
-  )
+  
+  }
+) %>%
+  group_by(Sim) %>%
+  mutate(RoundRemoved = ifelse(is.na(RoundRemoved), max(RoundRemoved), RoundRemoved))
 
+Removeddf2 <- Removeddf %>%
+  spread(., key = Sim, value = RoundRemoved)
+
+
+
+setwd("/home/jonno/BigHeat")
+
+list.files(pattern = ".r") %>%
+  walk(~{source(.x)})
+
+
+test2 <- Removeddf2 %>%
+  select(-Edges) %>% t %>% cor()
+
+test3 <- orderedheat(test2, simMat = T, mid =0.0)
+test3
+
+NL <- read_rds("Simulation_ID_1.rds" ) %>%
+  RoundRemoved()
+  
+NLmat1 <- rep(NL$RoundRemoved, each = length(NL$RoundRemoved)) 
+
+NLmat2 <- rep(NL$RoundRemoved, times = length(NL$RoundRemoved))
+
+NLmat3 <- matrix(as.integer(NLmat1 == NLmat2), nrow=nrow(NL))
+
+
+gtest <-graph_from_adjacency_matrix(NLmat3) %>%
+  simplify() %>% delete.vertices(., degree(.)==0)
+
+
+plot(gtest)
 
 ```
 
