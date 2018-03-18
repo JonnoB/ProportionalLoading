@@ -15,7 +15,8 @@ The goal of this paper is to compare real and proportional line limits and see w
 
 
 ```{r}
-packages <- c("tidyverse", "igraph","readr","readxl", "broom", "zoo", "stringr","foreach", "doMC",  "xtable", "geomnet", "ggnetwork", "rlang", "animation", "ggridges", "poweRlaw")
+
+packages <- c("tidyverse", "igraph","readr","readxl", "broom", "zoo", "stringr","foreach", "doMC",  "xtable", "geomnet", "ggnetwork", "rlang", "animation", "ggridges", "poweRlaw", "Rtsne", "caret", "ranger")
 
 new.packages <- packages[!(packages %in% installed.packages()[,"Package"])]
 if(length(new.packages)) install.packages(new.packages)
@@ -30,7 +31,7 @@ select <- dplyr::select
 
 basewd <- "/home/jonno/Dropbox/Jonathan_Bourne_Phd_Folder"
 datafile <- "/home/jonno/Dropbox/Jonathan_Bourne_Phd_Folder/ETYSAppendixB"
-LatexFolder <- "/home/jonno/Dropbox/Apps/ShareLaTeX/Method outline" 
+LatexFolder <- "/home/jonno/Dropbox/Apps/ShareLaTeX/Proportional Line Limits" 
 FiguresFolder <- file.path(LatexFolder, "Figures")
 TablesFolder <- file.path(LatexFolder, "Tables")
 MatricesFolder <- file.path(LatexFolder, "Matrices")
@@ -111,7 +112,7 @@ alpha_vector %>% walk(~{
 ##Extend the experiment
 This is used to extend the original experiment from 150 node removals to complete collapse
 ```{r}
-
+ 
 # setwd(PLwd)
 # directories <- list.dirs()
 # 
@@ -134,11 +135,9 @@ This is used to extend the original experiment from 150 node removals to complet
 Extracting stats is slow this extracts the stats and saves them as a file.
 
 ```{r}
-Propfolder <- "/media/jonno/Seagate Expansion Drive/ProportionalLoading"
 
-
-Sim_summary <- list.files(Propfolder, patter = "(alpha)|(Random)") %>% 
-  file.path(Propfolder,.) %>% map_df(~{
+Sim_summary <- list.files(PLwd, patter = "(alpha)|(Real)") %>% 
+  file.path(PLwd,.) %>% map_df(~{
     
     rootfolder <- .x
     targetfolder <- basename(.x)
@@ -155,7 +154,7 @@ Sim_summary <- list.files(Propfolder, patter = "(alpha)|(Random)") %>%
                  simulationID = .x)
       savename <-paste0(targetfolder, ".rds")
       
-      saveRDS(summarydata, savename)  
+      saveRDS(summarydata, file.path("SummaryData",savename))  
       
       print(paste("File", savename, "saved"))
       
@@ -165,8 +164,10 @@ Sim_summary <- list.files(Propfolder, patter = "(alpha)|(Random)") %>%
   )
 
 #temp fix needs to be done properly
-AttackRoundData <- list.files(pattern = ".rds")[-8] %>%
+setwd(file.path(PLwd,"SummaryData"))
+AttackRoundData <- list.files(pattern = ".rds") %>%
   map_df(~read_rds(.x))
+setwd(PLwd)
 
 
 ```
@@ -206,7 +207,8 @@ SummariseMonteCarlo <- function(df){
 
 SummaryofGC<- AttackRoundData %>%
   SummariseMonteCarlo %>%
-  mutate(PercNum = NodesAttacked/958)
+  mutate(PercNum = NodesAttacked/958,
+         alpha = sub("alpha_value_", "", alpha) %>% sub("_", " ", .))
 
 PNodeDens <-  AttackRoundData %>%
   mutate(PercNum = round(NodesAttacked*100/958),
@@ -243,21 +245,27 @@ SummaryofGC %>%
 
  
  NodeCollapse %>%
+       filter(is.finite(sd)) %>% #need to remove infinte values 
     ggplot(aes(x= PercNum, y = mean, colour = alpha)) +geom_line() +
    # geom_ribbon(aes(ymin=GC05, ymax=GC95, fill = alpha), alpha = 0.3) + 
   scale_x_continuous(labels=scales::percent) + 
   scale_y_continuous(labels=scales::percent) +
+   coord_cartesian(x = c(0,0.5))+
   facet_grid(~type) +
   labs(title = "Change in Giant Componant and Blackout size as nodes are attacked" , x = "Percent of elements attacked", y = "Performance drop")
  
- 
+ ggsave(file.path(FiguresFolder,"GCandBlackoutChange.pdf"))
+  
   NodeCollapse %>%
+    filter(is.finite(sd)) %>% #need to remove infinte values 
     ggplot(aes(x= PercNum, y =sd, colour = alpha)) +geom_line() +
    # geom_ribbon(aes(ymin=GC05, ymax=GC95, fill = alpha), alpha = 0.3) + 
   scale_x_continuous(labels=scales::percent) + 
   scale_y_continuous(labels=scales::percent) +
+       coord_cartesian(x = c(0,0.5))+
   facet_grid(~type) +
   labs(title = "Size of 95-05 confidence interval as attack developes" , x = "Percent of elements attacked", y = "standard deviation")
+ ggsave(file.path(FiguresFolder,"SDchange.pdf"))
  
 ```
 
@@ -268,7 +276,140 @@ Get the round number that an edge was deleted.
 
 
 ```{r}
+
+setwd(PLwd)
+if(!file.exists("AllRemovedEdges.rds")){
+AllRemovedEdges <- list.dirs(path = ".", full.names = TRUE, recursive = TRUE)[-1] %>%
+  map_df( ~{
+    print(.x)
+    setwd(.x)
     
+    Removeddf <- list.files() %>% map_df(~{
+ file <- .x
+  print(file)
+  read_rds(file ) %>%
+  RoundRemoved()  %>%
+    mutate(Sim = gsub(".rds", "",file))
+  
+  
+  }
+) %>%
+  group_by(Sim) %>%
+  mutate(RoundRemoved = ifelse(is.na(RoundRemoved), max(RoundRemoved), RoundRemoved),
+         alpha = basename(.x)) %>% 
+      ungroup
+   
+    setwd(PLwd)
+    
+    return(Removeddf)
+  }
+  )
+
+save_rds(AllRemovedEdges, "AllRemovedEdges.rds")
+} else {
+  AllRemovedEdges <- read_rds("AllRemovedEdges.rds")
+}
+
+```
+
+TSNE that thang
+```{r}
+
+TSNEdf <- AllRemovedEdges %>%
+  spread(key = Edges, value = RoundRemoved, fill = 0)
+
+key <- TSNEdf %>%
+  select(Sim, alpha) 
+
+#This is irellevant as the the following section that performs a TSNE on the corellation is very clear and avoids confounding due to with high numbers
+
+# TSNEmat <- TSNEdf %>%
+#   select(-Sim, -alpha) %>%
+#   as.matrix()
+# 
+# 
+# TsneOut1 <-TSNEmat %>%  
+#   Rtsne(verbose = TRUE, eta = 1, max_iter = 5000, perplexity = 50) 
+# 
+# TsneOut2 <-TSNEmat %>%  
+#  Rtsne(verbose = TRUE, eta = 1, max_iter = 5000, perplexity = 200) #high seperation of alpha level
+# 
+# #Plot the TSNE graph
+# tsne_plot <- data.frame(x1 = TsneOut1$Y[,1], 
+#                         y1 = TsneOut1$Y[,2],
+#                         x2 = TsneOut2$Y[,1], 
+#                         y2 = TsneOut2$Y[,2]) %>%
+#   bind_cols(key)
+# 
+# ggplot(tsne_plot) + geom_point(aes(x=x1, y=y1, color=alpha))+ 
+#    theme(legend.position="none")
+# 
+# ggplot(tsne_plot) + geom_point(aes(x=x2, y=y2, color=alpha))+ 
+#     scale_colour_brewer(palette = "Set1")
+# 
+# ggplot(tsne_plot) + geom_point(aes(x=x2, y=y2, color=alpha))+ scale_colour_brewer(palette = "Set1")
+```
+
+Corellation TSNSE
+```{r}
+
+TSNEcormat <- TSNEmat %>% t %>% cor()
+
+dups <-duplicated(TSNEcormat) 
+
+key2 <- key[!dups,]
+
+TsnecorOut1 <-TSNEcormat[!dups,] %>%  
+  Rtsne(verbose = TRUE, eta = 1, max_iter = 5000, perplexity = 50, check_duplicates = FALSE) 
+
+tsne_corplot <- data.frame(x1 = TsnecorOut2$Y[,1], 
+                        y1 = TsnecorOut2$Y[,2]) %>%
+  bind_cols(key2)
+
+ggplot(tsne_corplot) + geom_point(aes(x=x1, y=y1, color= alpha))+ 
+     theme(legend.position="none")+
+  ggtitle("Low dimensional similarity of the the Edge Round removal\n corellation between all Simulations")
+ggsave(file.path(FiguresFolder, "TSNEcor.pdf"))
+```
+
+
+Make random forest classifier
+
+```{r}
+
+trainset <- createDataPartition(key$alpha, p = .75, list = FALSE)
+
+ClassDict <- data_frame(alpha = unique(key$alpha)) %>%
+  mutate(ID = 1:nrow(.))
+
+key2 <- key %>% left_join(., ClassDict)
+
+datasetTrain <- bind_cols(select(key2, ID), as_tibble(TSNEcormat)) %>% as.matrix()
+
+rf_ranger_default <- ranger(data = datasetTrain[trainset,],
+                              num.trees = 500,
+                              mtry = 500,
+                              dependent.variable.name = "ID", 
+                              num.threads = 7, 
+                              classification = TRUE)
+  
+
+
+
+Out<- predict(rf_ranger_default , data = datasetTrain[-trainset,], type = "response", predict.all = F)
+confusionMatrix(Out$predictions, datasetTrain[-trainset,1])
+
+```
+
+
+
+```{r}
+
+list.files(PLwd, patter = "(alpha)|(Real)")
+
+setwd(PLwd)
+setwd("./alpha_value_105")
+
 Removeddf <- list.files() %>% map_df(~{
  file <- .x
   print(file)
@@ -289,14 +430,14 @@ Removeddf2 <- Removeddf %>%
 
 setwd("/home/jonno/BigHeat")
 
-list.files(pattern = ".r") %>%
+list.files(pattern = ".R$") %>%
   walk(~{source(.x)})
 
 
 test2 <- Removeddf2 %>%
   select(-Edges) %>% t %>% cor()
 
-test3 <- orderedheat(test2, simMat = T, mid =0.0)
+test3 <- orderedheat(test2, simMat = T, mid =0.4)
 test3
 
 NL <- read_rds("Simulation_ID_1.rds" ) %>%
