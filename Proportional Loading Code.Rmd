@@ -23,7 +23,7 @@ https://www.sciencedirect.com/science/article/pii/S2352484716300877#f000005
 
 ```{r}
 
-packages <- c("tidyverse", "igraph","readr","readxl", "broom", "zoo", "stringr","foreach", "doMC",  "xtable", "geomnet", "ggnetwork", "rlang", "animation", "ggridges", "poweRlaw", "Rtsne", "caret", "ranger", "xtable")
+packages <- c("tidyverse", "igraph","readr","readxl", "broom", "zoo", "stringr","foreach", "doMC",  "xtable", "geomnet", "ggnetwork", "rlang", "animation", "ggridges", "poweRlaw", "Rtsne", "caret", "ranger", "xtable", "broom", "modelr")
 
 new.packages <- packages[!(packages %in% installed.packages()[,"Package"])]
 if(length(new.packages)) install.packages(new.packages)
@@ -49,6 +49,7 @@ Functions <-"/home/jonno/Create_ETYS_network/Functions"
 Tariff <- file.path(basewd,"Tariff and Transport")
 PLwd <- "/media/jonno/Seagate Expansion Drive/ProportionalLoading"
 Saved_Sims <- file.path(PLwd, "Saved_Sims")
+Deletion_Order_Folder <- "/media/jonno/Seagate Expansion Drive/ProportionalLoading/DeletionOrder"
 
 source("/home/jonno/Create_ETYS_network/SubCode/LoadData2.R")
 
@@ -81,13 +82,23 @@ saveRDS(DeleteOrders, filename)
 ```
 
 
+#Set alpha colour gradient
+```{r}
+  AlphaGrad <-scale_colour_gradientn(colors = c("red",   "limegreen"),
+                          #midpoint = log(median(NodeCollapse2$alpha)),
+                          breaks = c(1,2,7,20,50),
+                          trans = "log",
+                          values = scales::rescale((c(0, 6, 7, 20, 50)))) 
+```
+
+
 #Comparison of line limit methods
 
 This section compares artificial line limits created using a variety of metrics
 
 ```{r}
 
-alpha_levels <- c(1.05, 1.1, 1.2, 1.5, 2, 3, 5)
+alpha_levels <- seq(1, 7, 0.05) #c(1, 1.05, 1.1, 1.2, 1.5, 2, 3, 5, 6,7)
 #alpha_levels <- c(1, 1.05, 1.1, 1.2, 1.5, 2, 3, 5,6,7,8,9,10)
 
 EdgeAttr <- get.edge.attribute(g) %>% names %>% 
@@ -111,75 +122,71 @@ PL_Limits <- alpha_levels %>% map(~{
           get.edge.attribute(g, "Link.Limit")!= 1e5)
          
 
-Constant_Limits <- alpha_levels %>% map(~{
-EdgeAttr %>%
-  mutate(constant = max(PowerFlow)*.x) %>%
-  select(constant) %>%
-  set_names(paste0("Constant_",.x*100))
-}
-) %>% bind_cols()
+# Constant_Limits <- alpha_levels %>% map(~{
+# EdgeAttr %>%
+#   mutate(constant = max(PowerFlow)*.x) %>%
+#   select(constant) %>%
+#   set_names(paste0("Constant_",.x*100))
+# }
+# ) %>% bind_cols()
+# 
+# Constant_Volt_Limits <- alpha_levels %>% map(~{
+# EdgeAttr %>%
+#     group_by(Voltage) %>%
+#   mutate(constant = max(PowerFlow)*.x) %>%
+#     ungroup %>%
+#   select(constant) %>%
+#   set_names(paste0("Constant_Volt_",.x*100))
+# }
+# ) %>% bind_cols()
 
-Constant_Volt_Limits <- alpha_levels %>% map(~{
-EdgeAttr %>%
-    group_by(Voltage) %>%
-  mutate(constant = max(PowerFlow)*.x) %>%
+
+ElectCentr <- ElectricalCentrality(g, Node_name = "name",
+                             Generation = "Generation",
+                             Demand = "Demand",
+                             Bus_order = "Bus.Order")
+# 
+# 
+ElectCentr2 <- ElectCentr %>%
+  rename(values = ElectricalCentrality)%>%
+  mutate(metric = "MyMetric",
+         Edgename = get.edge.attribute(g, "name"),
+         PowerFlow = get.edge.attribute(g, "PowerFlow"),
+         Link.Limit= get.edge.attribute(g, "Link.Limit"),
+         Voltage= get.edge.attribute(g, "Voltage"),
+         perc = values/max(values),
+         Scale_Fract = (values-min(values[values>0]))/(max(values)-min(values[values>0])),#minimum greater than 0
+         Scale_Fract = ifelse(Scale_Fract<0, 0, Scale_Fract))  %>% #prevents 0 from being negative
+#Alpha max 0.95 alpha min 0.05
+mutate(alpha_high = (20-1.05)*Scale_Fract + 1.05,
+       alpha_low = (20-1.05)*(1-Scale_Fract) + 1.05,
+       Edge_Centrality_high_95 = abs(PowerFlow*alpha_high),
+       Edge_Centrality_low_95 = abs(PowerFlow*alpha_low))  %>%
+   filter(Link.Limit!=1e5, Voltage!=0
+         )
+
+
+Edge_Centrality_high <- alpha_levels %>% map(~{
+ElectCentr2 %>%
+  mutate(constant = (20-.x)*Scale_Fract + .x) %>%
     ungroup %>%
   select(constant) %>%
-  set_names(paste0("Constant_Volt_",.x*100))
+  set_names(paste0("Edge_Centrality_high_",.x*100))
 }
 ) %>% bind_cols()
 
-# 
-# ElectCentr <- ElectricalCentrality(g, Node_name = "name",
-#                              Generation = "Generation",
-#                              Demand = "Demand",
-#                              Bus_order = "Bus.Order")
-# 
-# 
-# ElectCentr2 <- ElectCentr %>%
-#   rename(values = ElectricalCentrality)%>%
-#   mutate(metric = "MyMetric",
-#          Edgename = get.edge.attribute(g, "name"),
-#          PowerFlow = get.edge.attribute(g, "PowerFlow"),
-#          Link.Limit= get.edge.attribute(g, "Link.Limit"),
-#          Voltage= get.edge.attribute(g, "Voltage"),
-#          perc = values/max(values),
-#          Scale_Fract = (values-min(values[values>0]))/(max(values)-min(values[values>0])),#minimum greater than 0
-#          Scale_Fract = ifelse(Scale_Fract<0, 0, Scale_Fract))  %>% #prevents 0 from being negative
-# #Alpha max 0.95 alpha min 0.05
-# mutate(alpha_high = (20-1.05)*Scale_Fract + 1.05,
-#        alpha_low = (20-1.05)*(1-Scale_Fract) + 1.05,
-#        Edge_Centrality_high_95 = abs(PowerFlow*alpha_high),
-#        Edge_Centrality_low_95 = abs(PowerFlow*alpha_low))  %>%
-#    filter(Link.Limit!=1e5, Voltage!=0
-#          )
-# 
-# 
-# Edge_Centrality_high <- alpha_levels %>% map(~{
-# ElectCentr2 %>%
-#   mutate(constant = (20-.x)*Scale_Fract + .x) %>%
-#     ungroup %>%
-#   select(constant) %>%
-#   set_names(paste0("Edge_Centrality_high_",.x*100))
-# }
-# ) %>% bind_cols()
-# 
-# Edge_Centrality_low <- alpha_levels %>% map(~{
-# ElectCentr2 %>%
-#   mutate(constant = (20-.x)*(1-Scale_Fract) + .x) %>%
-#     ungroup %>%
-#   select(constant) %>%
-#   set_names(paste0("Edge_Centrality_low_",.x*100))
-# }
-# ) %>% bind_cols()
+Edge_Centrality_low <- alpha_levels %>% map(~{
+ElectCentr2 %>%
+  mutate(constant = (20-.x)*(1-Scale_Fract) + .x) %>%
+    ungroup %>%
+  select(constant) %>%
+  set_names(paste0("Edge_Centrality_low_",.x*100))
+}
+) %>% bind_cols()
 
 #The results
 
-EdgeAttr2 <-  bind_cols(PL_Limits,Constant_Limits, Constant_Volt_Limits) 
-%>%
-  filter(Link.Limit!=1e5
-         , Voltage!=0
-         )
+EdgeAttr2 <- PL_Limits
 
 #EdgeAttr2 <-  bind_cols(PL_Limits,Constant_Limits, Constant_Volt_Limits, Edge_Centrality_high, Edge_Centrality_low)
 
@@ -200,24 +207,24 @@ Limit_Method_RMSE <- EdgeAttr2 %>%
          Level = str_split(type, '_(?=[^_]+$)') %>% 
            transpose() %>% 
            .[[2]] %>% 
-           unlist)
+           unlist) %>%
+  #This bit converts the Level to numeric. Useful when Only Alpha is being analysed
+  mutate(Level = as.numeric(Level)/100)
  
-Limit_Method_RMSE %>%
- #filter(grepl("Edge", type)) %>%
-ggplot(., aes(x = log10(RMSE), y = (MAPE), colour = method)) + geom_point()
-+
-  coord_cartesian( y = c(0,20))
+Limit_Method_RMSE %>% 
+ggplot(., aes(x = RMSE, y = MAPE, colour = Level)) + geom_point() +
+  AlphaGrad +
+  ggtitle("Error modelling line-limits using PL")
 ggsave(file.path(FiguresFolder, "LimitMethodRMSE.pdf"))
 
 Limit_Method_RMSE %>%
 ggplot(., aes(x = RMSE, y = MAPE, colour = Level)) + geom_point() +
-  coord_cartesian(x= c(0,5000), y = c(0,20))
-
+  AlphaGrad
 
 Limit_Method_RMSE %>%
-ggplot(., aes(x = MAPE, y = MAE, colour = method)) + geom_point()
-+
-  coord_cartesian(x = c(0,20), y = c(3000,8000))
+ggplot(., aes(x = MAPE, y = MAE, colour = Level)) + geom_point() +
+  AlphaGrad
+
 ```
 
 #Load level plot
@@ -264,8 +271,9 @@ edges %>%
           Voltage !=0) %>%
    ggplot(aes(x = abs(PowerFlow), y = LoadLevel, colour = as.factor(Voltage))) +
    geom_point() +
-   labs(x= "Absolute Power Flow MW", y="Load Level", title = "Relationship between power flow and Load Level")
- 
+   labs(x= "Absolute Power Flow MW", y="Load Level", title = "Relationship between power flow and Load Level", colour = "Voltage") 
+  ggsave(file.path(FiguresFolder,"PowerFlowvsVoltage.pdf"))
+
 
  
  edges %>%
@@ -320,7 +328,7 @@ Should the function should be changed so that it can handle edges as well as nod
 #The vector of alpha values to be tested
 #alpha_vector <- c(1.05, 1.1, 1.2, 1.5, 2, 3, 5)
 setwd(Saved_Sims)
-alpha_vector <- c(50)
+alpha_vector <- c(35)
 
 #Create the simulations for each of the alpha avalues using 100 simulations for each
 alpha_vector %>% walk(~{
@@ -341,22 +349,65 @@ alpha_vector %>% walk(~{
 ```
 
 
-
+##Modelled limits
 ```{r}
-gProp <- Proportional_Load(g, alpha = 1)
 
- DeleteMe <- DeleteOrders %>%
-    filter(SimulationID == "Simulation_ID_27") %>%
-    select(-SimulationID) %>%
-    t %>%
-  as.vector
+#Set seed and create model input variables
+set.seed(1)
+ModelInputVars <- g %>% as_data_frame %>%
+  mutate(absPF = abs(PowerFlow),
+         Voltage = as.factor(Voltage)) %>%
+  select(Link.Limit, Voltage, absPF, Link)
 
-quo(expr = FixedStrategyAttack(g = g, DeletionOrder = DeleteMe))
+#generate k=10 crossfold validated model
+models <- ModelInputVars %>%
+  filter(Link.Limit != 1e5) %>%
+  crossv_kfold(k = 10) %>%
+  mutate(model = map(train, ~ lm(Link.Limit ~ Voltage + absPF, data = .)))
 
-test<- AttackTheGrid(list(gProp), , MinMaxComp = 0, TotalAttackRounds = 1000)
+#create predictions for each edge in the network
+predictions <- models %>%
+  unnest(map2(model, test, ~ augment(.x, newdata = .y)))
+
+#Look at coefficiients
+ models %>%
+  unnest(map(model, ~ tidy(.x))) %>%
+   select(.id, term, estimate) %>%
+   spread(key = term, value = estimate)
+ 
+
+predictions %>%
+  summarize(MSE = mean((Link.Limit - .fitted) ^ 2),
+            MSEIntercept = mean((Link.Limit - mean(Link.Limit))^2))
+
+postResample(predictions$.fitted, predictions$Link.Limit)
+
+predictions %>%
+  mutate(residual = (.fitted - Link.Limit)/Link.Limit) %>% #doesn't need to be relative. absolute gives half a random cloud
+  select(Voltage, residual, absPF) %>%
+  ggplot(aes(log10(absPF), residual)) +
+  geom_point() +
+  facet_wrap(~ Voltage)
+
+#Create new edge limits using the predictions
+NewEdges <- tibble(Link = get.edge.attribute(g, "Link") ) %>%
+  left_join(., predictions) %>%
+  mutate(.fitted = ifelse(is.na(.fitted), 1e5, .fitted))
+
+LinModLims <- set_edge_attr(g, "Link.Limit", value = NewEdges$.fitted)
+
+#Generate simulations
+setwd(Saved_Sims)
+
+folder <- "Linear_Model_Limits"
+
+  if(!file.exists(folder)){
+    dir.create(folder)
+  }
+
+SaveMultiAttacks(LinModLims, DeleteOrders, folder, TotalAttackRounds = AttackRounds, CascadeMode = T)
 
 ```
-
 
 
 
@@ -525,21 +576,21 @@ PNodeDens <-  AttackRoundData %>%
             LoadDrop = (first(GridLoading)-GridLoading)/first(GridLoading))
 
 
-test2 <- PNodeDens  %>%
-  select(GCfract, Blackout, alpha, PercNum) %>%
-  gather(., key="Type", value = "value",GCfract, Blackout) %>%
-  mutate(Type = ifelse(Type == "GCfract","Giant componant size reduction", "Blackout size"))
-  
-
- test2   %>%
-     filter(is.finite(value)) %>%
-  mutate(  PercAttacked= fct_rev(as_factor(paste0(PercNum, "%"))))  %>%
-  ggplot(aes(y = PercAttacked)) +
-  geom_density_ridges(aes(x = value, fill = alpha), alpha = 0.5)  + 
-  scale_x_continuous(labels=scales::percent)  +
-      facet_grid(~Type) +
-  labs(x = "Performance drop", y = "Percent of elements attacked",
-       title = "Change in the performance distribution as number of attacks increase") 
+# test2 <- PNodeDens  %>%
+#   select(GCfract, Blackout, alpha, PercNum) %>%
+#   gather(., key="Type", value = "value",GCfract, Blackout) %>%
+#   mutate(Type = ifelse(Type == "GCfract","Giant componant size reduction", "Blackout size"))
+#   
+# 
+#  test2   %>%
+#      filter(is.finite(value)) %>%
+#   mutate(  PercAttacked= fct_rev(as_factor(paste0(PercNum, "%"))))  %>%
+#   ggplot(aes(y = PercAttacked)) +
+#   geom_density_ridges(aes(x = value, fill = alpha), alpha = 0.5)  + 
+#   scale_x_continuous(labels=scales::percent)  +
+#       facet_grid(~Type) +
+#   labs(x = "Performance drop", y = "Percent of elements attacked",
+#        title = "Change in the performance distribution as number of attacks increase") 
 
 
  NodeCollapse <- rbind(SummaryofGC %>%
@@ -552,14 +603,15 @@ SummaryofGC %>%
 
  
  NodeCollapse2<- NodeCollapse %>%
-   filter(alpha != "Real Limits") %>%
+   filter(alpha != "Real Limits", alpha != "Linear Model_Limits") %>%
    mutate(alpha = ifelse(alpha == "Infinite Limits", "Inf", alpha),
           alpha = as.numeric(alpha)/100) %>%
    arrange(alpha)
  
  NodeCollapse2 %>%
        filter(is.finite(sd)) %>% #need to remove infinte values 
-    ggplot(aes(x= PercNum, y = mean, group = alpha)) +geom_line(aes(colour =alpha)) + 
+    ggplot(aes(x= PercNum, y = mean, group = alpha)) + 
+   geom_line(aes(colour =alpha)) + 
    scale_colour_gradientn(colors = c("red",   "limegreen"),
                           #midpoint = log(median(NodeCollapse2$alpha)),
                           breaks = c(1,2,7,20,50),
@@ -567,24 +619,29 @@ SummaryofGC %>%
                           values = scales::rescale((c(0, 6, 7, 20, 50)))) +
    geom_line(data = NodeCollapse %>% 
                filter(alpha == "Real Limits",is.finite(sd)), 
-             aes(x= (PercNum), y = mean),
-             linetype = "dotdash") +
+             aes(x= (PercNum), y = mean)) +
+   geom_line(data = NodeCollapse %>% 
+               filter(alpha == "Linear Model_Limits",is.finite(sd)), 
+             aes(x= (PercNum), y = mean), colour = "blue" ) +
   scale_x_continuous(labels=scales::percent) + 
   scale_y_continuous(labels=scales::percent) +
   coord_cartesian(x = c(0,0.5))+
   facet_grid(~type) +
-  labs(title = "Change in Giant Componant and Blackout size as nodes are attacked" , x = "Percent of elements attacked", y = "Performance drop")
+  labs(title = "Change in Giant Componant and Blackout size as nodes are attacked" , 
+       x = "Percent of elements attacked", 
+       y = "Performance drop") 
  
  ggsave(file.path(FiguresFolder,"GCandBlackoutChange.pdf"))
 
 
-NodeCollapse %>% filter(alpha == "Real Limits",is.finite(sd))
- ggplot()+
- geom_line(data = NodeCollapse %>% filter(alpha == "Real Limits",is.finite(sd)), aes(x= (PercNum), y = mean))+
-  facet_grid(~type)
-
  
+
 #this shows the relationship between alpha values
+DamCounts <-  NodeCollapse %>%
+   group_by(PercNum) %>%
+   summarise(counts = n()) %>%
+  top_n(10)
+ 
 test <-  NodeCollapse %>%
    mutate(rank = rank(PercNum)) %>%
    filter(type == "Blackout size", rank == 4949.5)
@@ -593,10 +650,7 @@ test %>%
   ggplot(aes(x= log(as.numeric(alpha)/100), y = (mean))) +
   geom_line()
 
-NodeCollapse %>%
-  ggplot(aes(x= PercNum, y = as.numeric(alpha), z = mean)) +  
-  geom_tile(aes(fill = mean)) +
-  stat_contour()
+
 
 
 NodeCollapse2 %>%
@@ -609,8 +663,10 @@ NodeCollapse2 %>%
                           values = scales::rescale((c(0, 6, 7, 20, 50)))) +
    geom_line(data = NodeCollapse %>% 
                filter(alpha == "Real Limits",is.finite(sd)), 
-             aes(x= (PercNum), y = sd),
-             linetype = "dotdash") +
+             aes(x= (PercNum), y = sd)) +
+   geom_line(data = NodeCollapse %>% 
+               filter(alpha == "Linear Model_Limits",is.finite(sd)), 
+             aes(x= (PercNum), y = sd), color = "blue") +
    # geom_ribbon(aes(ymin=GC05, ymax=GC95, fill = alpha), alpha = 0.3) + 
   scale_x_continuous(labels=scales::percent) + 
   scale_y_continuous(labels=scales::percent) +
@@ -619,23 +675,6 @@ NodeCollapse2 %>%
   labs(title = "Size of 95-05 confidence interval as attack developes" , x = "Percent of elements attacked", y = "standard deviation")
  ggsave(file.path(FiguresFolder,"SDchange.pdf"))
  
-  NodeCollapse %>%
-    mutate(alpha2 = ifelse(is.na(as.integer(alpha)), alpha, "PL")) %>%
-       filter(is.finite(sd)) %>% #need to remove infinte values 
-    filter(alpha2 != "PL") %>%
-    ggplot(aes(x= PercNum, y = mean, colour = alpha2, group = alpha)) +geom_line() +
-   # geom_ribbon(aes(ymin=GC05, ymax=GC95, fill = alpha), alpha = 0.3) + 
-  scale_x_continuous(labels=scales::percent) + 
-  scale_y_continuous(labels=scales::percent) +
-   coord_cartesian(x = c(0,0.5))+
-  facet_grid(~type) +
-  labs(title = "Change in Giant Componant and Blackout size as nodes are attacked" , x = "Percent of elements attacked", y = "Performance drop")
-
-  
- test2 <- NodeCollapse %>%
-    mutate(alpha2 = ifelse(is.na(as.integer(alpha)), alpha, "PL")) %>%
-       filter(is.finite(sd)) %>% #need to remove infinte values 
-    filter(alpha2 != "PL")
 ```
 
 
@@ -645,40 +684,42 @@ Get the round number that an edge was deleted.
 
 ```{r}
 
+FolderVect <- list.files(path = Saved_Sims)
+FileVect <- list.files(path = Deletion_Order_Folder) %>% gsub(".rds", "",.)
+new.type <- FolderVect[!(FolderVect %in% FileVect)]
 
 
-setwd(PLwd)
-if(!file.exists("AllRemovedEdges.rds")){
-AllRemovedEdges <- list.files(path = Saved_Sims, full.names = TRUE) %>%
-  map_df( ~{
+if(length(new.type)){
+file.path(Saved_Sims, new.type) %>%
+  walk( ~{
     print(.x)
-    setwd(.x)
     
-    Removeddf <- list.files() %>% map_df(~{
- file <- .x
-  print(file)
-  read_rds(file ) %>%
-  RoundRemoved()  %>%
-    mutate(Sim = gsub(".rds", "",file))
-  
-  
-  }
-) %>%
-  group_by(Sim) %>%
-  mutate(RoundRemoved = ifelse(is.na(RoundRemoved), max(RoundRemoved), RoundRemoved),
+  Removeddf <- list.files(path = .x, full.names = TRUE) %>% 
+    map_df(~{
+        file <- .x
+        print(file)
+        read_rds(file ) %>%
+          RoundRemoved()  %>%
+          mutate(Sim = gsub(".rds", "",file) %>% basename)
+      }
+    ) %>%
+    group_by(Sim) %>%
+    mutate(RoundRemoved = ifelse(is.na(RoundRemoved), max(RoundRemoved), RoundRemoved),
          alpha = basename(.x)) %>% 
-      ungroup
-   
-    setwd(PLwd)
-    
-    return(Removeddf)
+    ungroup
+
+  Removeddf %>%
+        write_rds(x = ., paste0(file.path(Deletion_Order_Folder,basename(.x)), ".rds"))
   }
   )
 
-saveRDS(AllRemovedEdges, "AllRemovedEdges.rds")
-} else {
-  AllRemovedEdges <- read_rds("AllRemovedEdges.rds")
-}
+} 
+  
+
+AllRemovedEdges <- list.files(Deletion_Order_Folder, full.names = TRUE) %>%
+  map_df(~read_rds(.x))
+
+
 
 ```
 
@@ -690,6 +731,7 @@ The TSNE shows that the real line limits are most similar to the constant line l
 ```{r}
 
 TSNEdf <- AllRemovedEdges %>%
+ # filter(alpha %in% c("Real_Limits", "Linear_Model_Limits")) %>%
   spread(key = Edges, value = RoundRemoved, fill = 0)
 
 key <- TSNEdf %>%
@@ -699,6 +741,7 @@ key <- TSNEdf %>%
   grepl("Constant_Volt", alpha) ~"Constant Volt",
   grepl("Constant", alpha) ~"Constant",
   grepl("Infinite", alpha) ~"Infinite",
+  grepl("Linear_Model_Limits", alpha) ~"Linear Model Limits",
     TRUE ~ "Real Limits"
 ),
 SimID = gsub("Simulation_ID_", "", Sim) %>% as.integer,
@@ -743,21 +786,24 @@ dups <-duplicated(TSNEcormat)
 
 key2 <- key#[!dups,] 
   
-
+set.seed(12358)
 TsnecorOut1 <-TSNEcormat[!dups,] %>%  
   Rtsne(verbose = TRUE, eta = 1, max_iter = 5000, perplexity = 50, check_duplicates = FALSE) 
 
 tsne_corplot <- data.frame(x1 = TsnecorOut1$Y[,1], 
                         y1 = TsnecorOut1$Y[,2]) %>%
-  bind_cols(key2)
+  bind_cols(key2) %>%
+  mutate(alpha = sub("alpha_value_", "", alpha) %>% as.numeric()/100,
+         alpha = ifelse(alpha2 == "Infinite", Inf, alpha))
 
 tsne_corplot %>%
-  filter(!grepl("Constant", alpha)) %>%
+  filter(!grepl("Real", alpha), !grepl("Model", alpha)) %>%
     ggplot() + 
-  geom_point(aes(x=x1, y=y1, color= alpha))+ 
-     #theme(legend.position="none")+
-   # scale_colour_brewer(palette = "Set1")+
-  ggtitle("TSNE plot of proportional loading and real line limits\n correlation similarity across all simulations")
+  geom_point(aes(x=x1, y=y1, color= alpha))+
+    geom_point(data = filter(tsne_corplot, alpha2 == "Real Limits"), aes(x = x1, y = y1), colour = "dodgerblue2") +
+  geom_point(data = filter(tsne_corplot, alpha2 == "Linear Model Limits"), aes(x = x1, y = y1), colour = "black") +
+AlphaGrad +
+    ggtitle("TSNE plot of proportional loading and real line limits\n correlation similarity across all simulations")
 ggsave(file.path(FiguresFolder, "TSNEcor.pdf"))
 
 
@@ -775,25 +821,27 @@ ggsave(file.path(FiguresFolder, "TSNE_Method.pdf"))
 ##Box plot of corellations
 
 ```{r}
-test <- key2 %>%
+NewOrder <- key2 %>%
   arrange(alpha, SimID) %>%
   mutate(NewOrder = 1:nrow(.))
 
-RowIDS <- test %>%
+RowIDS <- NewOrder %>%
   group_by(alpha) %>%
   summarise(Start = first(NewOrder),
             Last = last(NewOrder))
 
-test2 <- TSNEcormat[test$OriginalOrder, test$OriginalOrder]
-test2 <- test2[,test$alpha =="Real_Limits"]
+OrderedReal <- TSNEcormat[NewOrder$OriginalOrder, NewOrder$OriginalOrder]
+OrderedReal <- OrderedReal[,NewOrder$alpha =="Real_Limits"]
 
 
-test3 <- 1:nrow(RowIDS) %>% map_df(~{
-  temp <- test2[RowIDS$Start[.x]:RowIDS$Last[.x],]
+AlphavsCor<- 1:nrow(RowIDS) %>% map_df(~{
+  temp <- OrderedReal [RowIDS$Start[.x]:RowIDS$Last[.x],]
   data_frame(alpha = RowIDS$alpha[.x], cor = diag(temp))
-})
+}) 
 
-test3 %>%
+
+
+AlphavsCor %>%
   filter(alpha != "Real_Limits") %>%
    filter(alpha != "Constant_105", alpha != "Constant_Volt_105" ) %>% ###This is added in to make only proportional!!!!
   mutate(alpha = ifelse(alpha== "Infinite_Limits","Inf", alpha),
@@ -812,11 +860,22 @@ test3 %>%
   labs(x = "alpha level", y ="Corellation with real line limits", title= "Edge removal rank corellation against real limits")
 ggsave(file.path(FiguresFolder, "CorBoxPlot.pdf"))
 
-test3 %>% 
+AlphavsCor %>% 
   group_by(alpha) %>%
   summarise(mean= mean(cor),
             median = median(cor),
             sd = sd(cor))
+
+alpha %in% c("alpha_value_100" , "alpha_value_500","Infinite_Limits", "Linear_Model_Limits" )
+
+AlphavsCor %>%
+   filter(alpha %in% c("alpha_value_100" , "alpha_value_500","Infinite_Limits", "Linear_Model_Limits" )) %>% 
+    ggplot(aes(x= as.factor(alpha), y = cor, fill = alpha)) +
+  geom_boxplot() +
+  scale_y_continuous( breaks = seq(0,1, by= 0.1)) +
+  theme(legend.position = "none", 
+        axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "alpha level", y ="Corellation with real line limits", title= "Edge removal rank corellation against real limits")
 
 ```
 
@@ -824,7 +883,7 @@ test3 %>%
 #Make random forest classifier
 
 ```{r}
-
+setwd(354)
 trainset <- createDataPartition(key$alpha2, p = .75, list = FALSE)
 
 ClassDict <- data_frame(alpha2 = unique(key$alpha2)) %>%
@@ -851,7 +910,7 @@ ConfMat <- confusionMatrix(ClassDict$alpha2[match(Out$predictions, ClassDict$ID)
                 ) 
 
 ConfMat$table %>%
-  xtable %>%
+  xtable(.,  caption = "Confusion matrix of random forest", label = "tab:ConfusionForest") %>%
   print(type = "latex", file = file.path(FiguresFolder, "ModelPerformance.txt"))
 
 
@@ -867,7 +926,7 @@ This chunk produces Boxplots of the evaluation metrics for each simulation type
 ```{r}
 
 
-test <- 1:100 %>% map_df(~{
+AccuracyAnalysis <- 1:100 %>% map_df(~{
 
   #print(paste("Simulation ID", .x))
 SimAttack <- AttackRoundData %>%
@@ -893,16 +952,16 @@ SimAttack[is.na(SimAttack)] <- 1
 ) %>% mutate(type = names(SimAttack),
              SimulationID = .x)
 
-}) 
-
-
-test %>% 
+}) %>% 
   rename(alpha  = type) %>%
-  filter(alpha != "Real_Limits", alpha !="Constant_105", alpha !="Constant_Volt_105") %>%
+  filter(alpha != "Real_Limits") %>%
     mutate(alpha = ifelse(alpha== "Infinite_Limits","Inf", alpha),
          alpha = gsub("alpha_value_", "", alpha),
-         alpha = as.numeric(alpha)/100) %>%
-  ggplot(aes(x= as.factor(alpha), y = RMSE, fill = alpha)) + geom_boxplot()+
+         alpha = as.numeric(alpha)/100) 
+
+
+BasePlot <- AccuracyAnalysis %>% 
+  ggplot(aes(x= as.factor(alpha), fill = alpha)) +
   theme(legend.position = "none",  
         axis.text.x = element_text(angle = 45, hjust = 1)) +
    scale_fill_gradientn(colors = c("red",   "limegreen"),
@@ -910,25 +969,78 @@ test %>%
                           breaks = c(1,2,7,20,50),
                           trans = "log",
                           values = scales::rescale((c(0, 6, 7, 20, 50))))+
-  scale_y_continuous( breaks = seq(0,1, by= 0.1)) +
-  ggtitle("RMSE against real line limits as alpha increases")
+  scale_y_continuous( breaks = seq(0,1, by= 0.1))
+
+
+
+BasePlot + geom_boxplot(aes(y = RMSE)) +
+  labs(x = "alpha", title = "RMSE against real line limits for all calculated alpha levels") 
 ggsave(file.path(FiguresFolder, "RMSEChange.pdf"))
 
-test %>%
-  filter(type != "Real_Limits") %>%
-  ggplot(aes(x= type, y = Rsquared, fill = type)) + geom_boxplot()+
-  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
 
-test %>%
-  filter(type != "Real_Limits") %>%
-  ggplot(aes(x= type, y = MAE, fill = type)) + geom_boxplot()+
-  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+BasePlot + geom_boxplot(aes(y = Rsquared)) +
+  labs(x = "alpha", title = "Rsquared against real line limits as alpha increases") 
 
-test %>%
-  filter(type != "Real_Limits") %>%
-  ggplot(aes(x= type, y = MAPE, fill = type)) + geom_boxplot() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
-  scale_y_log10()
+BasePlot + geom_boxplot(aes(y = MAE)) +
+  labs(x = "alpha", title = "MAE against real line limits as alpha increases") 
+
+BasePlot + geom_boxplot(aes(y = log(MAPE))) +
+  labs(x = "alpha", title = "MAPE against real line limits as alpha increases") 
+
+
+#Analysis for giant component size
+
+AccuracyAnalysisGC <- 1:100 %>% map_df(~{
+
+  #print(paste("Simulation ID", .x))
+SimAttack <- AttackRoundData %>%
+  filter(simulationID == .x) %>%
+  select(GCfract, alpha, NodesAttacked) %>% 
+  spread(key = alpha, value = GCfract) %>%
+   select(-NodesAttacked) %>%
+  filter(Real_Limits !=1)
+
+SimAttack[is.na(SimAttack)] <- 1
+  
+
+  
+  test2 <- SimAttack %>% map_df(~{
+   c(postResample(.x, SimAttack$Real_Limits) , 
+  mean(abs((SimAttack$Real_Limits - .x)/SimAttack$Real_Limits), na.rm = T)
+  ) %>%
+  matrix %>%
+  t %>%
+  data.frame() %>% 
+      set_names(names(postResample(SimAttack$Real_Limits, .x)), "MAPE" )
+}
+) %>% mutate(type = names(SimAttack),
+             SimulationID = .x)
+
+}) %>% 
+  rename(alpha  = type) %>%
+  filter(alpha != "Real_Limits") %>%
+    mutate(alpha = ifelse(alpha== "Infinite_Limits","Inf", alpha),
+         alpha = gsub("alpha_value_", "", alpha),
+         alpha = as.numeric(alpha)/100) 
+
+
+BasePlotGC <- AccuracyAnalysisGC %>% 
+  ggplot(aes(x= as.factor(alpha), fill = alpha)) +
+  theme(legend.position = "none",  
+        axis.text.x = element_text(angle = 45, hjust = 1)) +
+   scale_fill_gradientn(colors = c("red",   "limegreen"),
+                          #midpoint = log(median(NodeCollapse2$alpha)),
+                          breaks = c(1,2,7,20,50),
+                          trans = "log",
+                          values = scales::rescale((c(0, 6, 7, 20, 50))))+
+  scale_y_continuous( breaks = seq(0,1, by= 0.1))
+
+
+
+BasePlotGC + geom_boxplot(aes(y = RMSE)) +
+  labs(x = "alpha", title = "GCfract RMSE against real line limits as alpha increases") 
+ggsave(file.path(FiguresFolder, "RMSEChangeGCfract.pdf"))
+
 
 ```
 
@@ -961,13 +1073,14 @@ trainset <- createDataPartition(as.factor(edges2$Voltage), p = .75, list = FALSE
 trainset2 <- createDataPartition(edges2$LLbin, p = .75, list = FALSE)[,1] #trainset as vector
 
 
-Mod1 <- lm(LLbin2 ~Voltage  + (absPF), data = edges2[trainset,])
+Mod1 <- lm(Link.Limit ~Voltage  + absPF, data = edges2[trainset,])
 summary(Mod1)
 Preds <- predict(Mod1, edges2[-trainset,])
 
-postResample(Preds, edges2$LLbin2[-trainset])
+postResample(Preds, edges2$Link.Limit[-trainset])
 
-Predsdf <- data_frame(Preds, Obs = edges2$LLbin2[-trainset],
+Predsdf <- data_frame(Preds, 
+                      Obs = edges2$LLbin2[-trainset],
                       PowerFlow = edges2$PowerFlow[-trainset]) %>%
   mutate(error = Obs-Preds,
          abserror = abs(error),
@@ -1031,6 +1144,67 @@ summary(Mod4)
 Preds4 <- predict(Mod4, edges2[-trainset,])
 
 confusionMatrix(Preds4$predictions, edges2$Voltage[-trainset])
+
+```
+
+#Pred Lims 2
+
+```{r}
+
+ElectCentr <- ElectricalCentrality(g, Node_name = "name",
+                             Generation = "Generation",
+                             Demand = "Demand",
+                             Bus_order = "Bus.Order")
+# 
+# 
+ElectCentr2 <- ElectCentr %>%
+  rename(values = ElectricalCentrality)%>%
+  mutate(metric = "MyMetric",
+         Edgename = get.edge.attribute(g, "name"),
+         PowerFlow = get.edge.attribute(g, "PowerFlow"),
+         absPF = abs(PowerFlow),
+         Link.Limit= get.edge.attribute(g, "Link.Limit"),
+         Voltage= get.edge.attribute(g, "Voltage"),
+         perc = values/max(values),
+         Scale_Fract = (values-min(values[values>0]))/(max(values)-min(values[values>0])),#minimum greater than 0
+         Scale_Fract = ifelse(Scale_Fract<0, 0, Scale_Fract))  %>% #prevents 0 from being negative
+#Alpha max 0.95 alpha min 0.05
+mutate(alpha_high = (200-1.05)*Scale_Fract + 1.05,
+       alpha_low = (200-1.05)*(1-Scale_Fract) + 1.05,
+       Edge_Centrality_high_95 = abs(PowerFlow*alpha_high),
+       Edge_Centrality_low_95 = abs(PowerFlow*alpha_low))  %>%
+   filter(Link.Limit!=1e5, Voltage!=0
+         )
+
+
+postResample(ElectCentr2$Edge_Centrality_high_95, ElectCentr2$Link.Limit)
+
+
+trainset <- createDataPartition(ElectCentr2$Link.Limit p = .75, list = FALSE)[,1] #trainset as vector
+
+
+Mod1 <- lm(Link.Limit ~Voltage  + absPF, data = ElectCentr2[trainset,])
+summary(Mod1)
+
+Preds <- predict(Mod1, ElectCentr2[-trainset,])
+
+postResample(Preds, ElectCentr2$Link.Limit[-trainset])
+
+Predsdf <- data_frame(Preds, 
+                      Obs = ElectCentr2$Link.Limit[-trainset],
+                      PowerFlow = ElectCentr2$PowerFlow[-trainset],
+                      Voltage = ElectCentr2$Voltage[-trainset],) %>%
+  mutate(error = Obs-Preds,
+         abserror = abs(error),
+         PercError = error/Obs,
+         absPercError = abserror/Obs,
+         direction = PowerFlow>1)
+
+Predsdf %>%
+ggplot(aes(x= Obs, y=(PercError), colour = as.factor(Voltage))) +geom_point()
+
+Predsdf %>%
+ggplot(aes(x= log10(abserror), y=PercError, colour = as.factor(Voltage))) +geom_point()
 
 ```
 
@@ -1112,7 +1286,7 @@ NodeCollapse3 <- NodeCollapse2 %>%
    ungroup %>%
    mutate(alpha2 = alpha^2)
 
- ModLim <- lm(PercNum~ (alpha) + (alpha2), data = MaxLim)
+ ModLim <- lm(PercNum~ log(alpha) + log(alpha2), data = MaxLim)
  summary(ModLim)
  
 
@@ -1122,7 +1296,7 @@ NodeCollapse3 <- NodeCollapse2 %>%
  
 MaxLim2<- MaxLim2%>% mutate(PercNum = predict(ModLim, MaxLim2))
  
-ggplot(MaxLim, aes(x = alpha, y = PercNum)) +geom_point() +
+ggplot(MaxLim, aes(x = log(alpha), y = PercNum)) +geom_point() +
    geom_line(data = data.frame(PercNum2 = predict(ModLim, MaxLim2), alpha2 = MaxLim2$alpha),
              aes(y = PercNum2, x = alpha2))
  
@@ -1140,14 +1314,17 @@ ktest2 <- NodeCollapse2 %>% select(mean, PercNum, alpha) %>%
 ktest2 %>%
   filter(dups == "0.00104384133611691-1")
 
-
+library(rgdal)
+library(sp)
+library(gstat)
 spatdf <- NodeCollapse3 %>%
+  mutate(alpha = log(alpha)) %>%
   rename(x = PercNum, y = alpha)
 
 coordinates(spatdf) <- ~x+y
 Var <- variogram(mean~x+y, spatdf)
 plot(Var)
-m <- fit.variogram(Var, vgm("Gau"))
+m <- fit.variogram(Var, vgm("Sph"))
 
 
 plot(Var,m)
@@ -1155,6 +1332,7 @@ plot(Var,m)
 k <- gstat(formula=mean~1, locations=spatdf, model=m)
 
 g2<- g %>%
+    mutate(alpha = log(alpha)) %>%
   rename(x = PercNum, y = alpha)
 coordinates(g2) <- ~x+y
 
@@ -1187,4 +1365,46 @@ library(PowerGridNetworking)
 ```
 
 
+
+```{r}
+set.seed(1)
+
+models <- Smarket %>%
+  select(Today, Lag1:Lag5) %>%
+  crossv_kfold(k = 20) %>%
+  mutate(model = map(train, ~ lm(Today ~ ., data = .)))
+
+predictions <- models %>%
+  unnest(map2(model, test, ~ augment(.x, newdata = .y)))
+
+predictions %>%
+  summarize(MSE = mean((Today - .fitted) ^ 2),
+            MSEIntercept = mean((Today - mean(Today))^2))
+```
+
+
+
+```{r}
+
+library(tidyverse)
+library(ggplot2)
+
+type1 <- tibble(y = rep(1:10, each = 20 ), x =  rep(1:20, times = 10), type = rep(1:10, each = 20 ) %>% as.character)
+
+type2 <- tibble(y = seq(from = 0.5, to = 10, by=0.5), x = 1:20, type = "A")
+type3 <- tibble(y = seq(from = 10, to = 0.5, by=-0.5), x = 1:20, type = "B")
+
+ type1 %>% #need to remove infinte values 
+    ggplot(aes(x, y, group = type)) + 
+   geom_line(aes(colour = y)) +  
+   scale_colour_gradientn(colors = c("red",   "limegreen"), name = "Type1 value") +
+   geom_line(data = type2, 
+             aes(x,y)) +
+   geom_line(data = type3, 
+             aes(x, y), colour = "blue" ) 
+ 
+ 
+
+ 
+```
 
