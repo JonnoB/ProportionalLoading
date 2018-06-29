@@ -10,19 +10,6 @@ editor_options:
 
 
 
-Continuing the discussion from [How do I ask for help solving an Rstudio crash](https://community.rstudio.com/t/how-do-i-ask-for-help-solving-an-rstudio-crash/9884):
-
-Following the advice given in my previous question, I have collected the log and backtrace data generated during my last crash.
-
-The crash occurs during a series of simulations. The simulations all run fine independently but after a certain period of time always crash. When the crash occurs Rstudio exits. 
-Along with those who helped in my previous question I believe the problem may be related to memory leakage or something similar. However, I have tried sticking gc() all over the place and it didn't help.
-
-I cannot leave my computer to run on its own as it will crash and I need to restart the calculations from last point to finish each simulation set. This is obviously really annoying.
-
-Is there any clue from my logs what the problem is and how to solve it?
-
-
-
 
 This script is for the PhD chapter/paper on proportional grid loading.
 
@@ -94,6 +81,7 @@ set.seed(seed)
 DeleteOrders <- MultiAttackOrder(gbase, 100)  
 saveRDS(DeleteOrders, filename)
 }
+
 ```
 
 #Set alpha colour gradient
@@ -427,38 +415,7 @@ Extracting stats is slow this extracts the stats and saves them as a file.
 
 ```{r}
 
-list.files(Saved_Sims , full.names = TRUE) %>% 
-  walk(~{
-    
-    rootfolder <- .x
-    targetfolder <- basename(.x)
-    savename <-paste0(targetfolder, ".rds") %>% file.path(PLwd, "SummaryData",.)
-    
-    if(!file.exists(savename)){
-      
-      print(paste("Extracting summary data for", targetfolder))
-      
-      summarydata <-list.files(rootfolder) %>% 
-          map_df(~{
-            print(.x)
-            read_rds(file.path(rootfolder, .x)) %>%
-                   ExtractNetworkStats()%>%
-                   mutate( simulationID = gsub("\\.rds", "", .x ) %>% gsub("Simulation_ID_", "", .) %>% as.integer)
-            }
-            ) %>%
-          mutate(Cascade = TRUE, 
-                 alpha = targetfolder)
-
-      
-      saveRDS(summarydata, savename)  
-      
-      print(paste("File", savename, "saved"))
-      
-    } else {print(paste("saved file for" , targetfolder, "exists"))}
-  
-    }
-  )
-
+ExtractAttackStats(Saved_Sims, file.path(PLwd, "SummaryData"))
 
 #Load the saved files
 AttackRoundData <- list.files(path = file.path(PLwd,"SummaryData"), 
@@ -878,21 +835,6 @@ ggsave(file.path(FiguresFolder, "RMSEChangeGCfract.pdf"))
 ```
 
 
-#Tweaking the package
-The below code is used to tweak the R package, add to the documentation etc, etc
-
-```{r}
-library(devtools)
-library(roxygen2)
-setwd( "/home/jonno/PowerGridNetworking")
-document()
-setwd("/home/jonno")
-install("PowerGridNetworking")
-library(PowerGridNetworking)
-
-```
-
-
 ```{r}
 
 #Set seed and create model input variables
@@ -954,6 +896,149 @@ Ypredictions %>%
 metrics(. ,logY, .fitted)
 
 #The performance is much better than expected
+
+```
+
+#strategy difference
+
+
+```{r}
+
+ElecCen1<- ElectricalCentrality(g)
+
+test <- c(as_data_frame(g, what = "vertices") %>% 
+  as_tibble %>%
+      mutate(metric = degree(g)) %>%
+      arrange(desc(metric)) %>% .$name,
+
+as_data_frame(g, what = "vertices") %>%
+      mutate(metric = EntropicDegree(g, Scale = TRUE)) %>%
+      arrange(desc(metric)) %>% .$name,
+
+as_data_frame(g, what = "vertices") %>%
+      mutate(metric = EntropicDegree(g, value = "PowerFlow", Scale = TRUE)) %>%
+      arrange(desc(metric)) %>% .$name,
+
+
+ElecCen1$NodeEC %>% arrange(-NodeEC) %>% .$Bus.Name,
+
+ as_data_frame(g, what = "vertices") %>%
+      mutate(metric = betweenness(g)) %>%
+      arrange(desc(metric)) %>% .$name
+) %>% matrix(., nrow = 5, byrow = T) %>%
+  as_tibble %>%
+  mutate(SimulationID = paste0("Simulation_ID_",1:5)) %>%
+  select(SimulationID, everything()) %>%
+  setNames(c("SimulationID", paste0("Target", 1:958)))
+
+
+ 
+```
+
+
+#Different strategies 1 load level
+```{r}
+#The vector of alpha values to be tested
+alpha_vector <- c(1.05, 1.1, 5,  10, 20, 50)
+
+StratAttackWd <- "/media/jonno/Seagate Expansion Drive/ProportionalLoading/StratAttack"
+setwd(StratAttackWd)
+
+#Create the simulations for each of the alpha avalues using 100 simulations for each
+alpha_vector %>% walk(~{
+  gProp <- Proportional_Load(g, alpha = .x)
+  
+  folder <- paste0("alpha_value_",  .x*100)
+  #create folder if it doesn't already exist
+  if(!file.exists(folder)){
+    dir.create(folder)
+  }
+  
+  SaveMultiAttacks(gProp, test, folder, TotalAttackRounds = AttackRounds, CascadeMode = T)
+  
+}
+  
+)
+
+setwd(StratAttackWd)
+folder <- "Real_Limits"
+
+  if(!file.exists(folder)){
+    dir.create(folder)
+  }
+
+SaveMultiAttacks(g,  test, folder, TotalAttackRounds = AttackRounds, CascadeMode = T)
+
+setwd(StratAttackWd)
+folder <- "Infinite_Limits"
+
+  if(!file.exists(folder)){
+    dir.create(folder)
+  }
+
+SaveMultiAttacks(g, test, folder, TotalAttackRounds = AttackRounds, CascadeMode = F)
+
+setwd(StratAttackWd)
+folder <- "Linear_Model_Limits"
+
+  if(!file.exists(folder)){
+    dir.create(folder)
+  }
+
+SaveMultiAttacks(LinModLims, test, folder, TotalAttackRounds = AttackRounds, CascadeMode = T)
+
+```
+
+
+
+```{r}
+
+RootFolder <- StratAttackWd
+
+ExtractAttackStats(StratAttackWd, file.path(PLwd, "Attack_Strategy_SummaryData"))
+
+AttackStratRoundData <- list.files(path = file.path(PLwd,"Attack_Strategy_SummaryData"), 
+                              pattern = ".rds", 
+                              full.names = TRUE) %>%
+   map_df(~read_rds(.x)) %>%
+  mutate(simulationID = case_when(
+    simulationID == "1" ~"Degree" ,
+    simulationID == "2" ~"EntDeg_LinkLimit",
+    simulationID == "3" ~"EntDeg_PowerFlow",
+    simulationID == "4" ~"Elec_Centrality",
+    TRUE ~ "Centrality"
+  ),
+  PercNum = NodesAttacked/958)
+
+
+AttackStratRoundData %>% #need to remove infinte values 
+  ggplot(aes(x = PercNum, y =  GCfract, colour = simulationID)) + 
+  geom_line() +  
+  #geom_line(data = RealCollapse, aes(fill = 'Real'), color = 'black') +
+  #geom_line(data = ModelledCollapse, aes(fill = 'Modelled'), color = 'blue') +
+  scale_fill_manual("Line Limit", values=c(1, 1)) +
+  facet_wrap(~alpha) +
+  scale_x_continuous(labels=scales::percent) + 
+  scale_y_continuous(labels=scales::percent) +
+  coord_cartesian(x = c(0,0.5)) +
+  labs(title = "Change in Giant Componant and Blackout size as nodes are attacked" , 
+       x = "Percent of elements attacked", 
+       y = "Performance drop")
+   
+```
+
+
+#Tweaking the package
+The below code is used to tweak the R package, add to the documentation etc, etc
+
+```{r}
+library(devtools)
+library(roxygen2)
+setwd( "/home/jonno/PowerGridNetworking")
+document()
+setwd("/home/jonno")
+install("PowerGridNetworking")
+library(PowerGridNetworking)
 
 ```
 
