@@ -53,6 +53,7 @@ Tariff <- file.path(basewd,"Tariff and Transport")
 PLwd <- "/media/jonno/Seagate Expansion Drive/ProportionalLoading"
 Saved_Sims <- file.path(PLwd, "Saved_Sims")
 Deletion_Order_Folder <- "/media/jonno/Seagate Expansion Drive/ProportionalLoading/DeletionOrder"
+StratAttackWd <- "/media/jonno/Seagate Expansion Drive/ProportionalLoading/StratAttack"
 
 source("/home/jonno/Create_ETYS_network/SubCode/LoadData2.R")
 
@@ -172,14 +173,42 @@ edges <- g %>% as_data_frame %>%
           PercLL = percent_rank(LoadLevel),
           PercLinkLimit = percent_rank(Link.Limit),
           PercFlow = percent_rank(abs(PowerFlow)))
+ 
+1/mean(edges$LoadLevel)
+c(1.05, 1.1, 1.2, 1.5, 2, 3, 5, 6, 7, 10, 15, 20, 50)
+LabelNames <- round(1/c(-.1, 0, .1,.2,.3,.4,.5,.6,.7,.8,.9,1), 2)
+LabelNames[1:2] <- c("", ">10") 
 
-edges %>%
+
+ColourTypes <- data.frame(x=1:length(LabelNames[-c(1,2)]), y = LabelNames[-c(1,2)] %>% as.character %>% as.numeric())
+
+TempPlot <- ColourTypes %>%
+  ggplot(aes(x, y, colour = y)) +
+  geom_point() +
+  AlphaGrad
+
+AccBuild <- ggplot_build(TempPlot)
+AccBarCol <- c("blue", "blue",unique(AccBuild$data[[1]][[1]]))
+names(AccBarCol) <-LabelNames %>%  as.factor %>% fct_relevel(., LabelNames) %>% levels
+rm(TempPlot)
+
+#Uses only Alpha which is much easier for people to understand
+ edges %>%
    filter(is.finite(alpha), Link.Limit!= 100000) %>%
-   ggplot(aes(x = LoadLevel)) + geom_histogram(bins = 10, aes(y = (..count..)/sum(..count..)))+ 
+   ggplot(aes(x = LoadLevel)) + 
+   geom_histogram(bins = 10, aes(y = (..count..)/sum(..count..)), fill = rev(AccBarCol[-c(1:2)]))+ #remove the fill to make it black again
   scale_y_continuous(labels = scales::percent, breaks = seq(0,.5, by= 0.05)) +
-  scale_x_continuous( breaks = seq(-1,5, by=0.1), labels = scales::percent)+ 
-   labs(x = "Load Level", y ="Percentage of total lines", title = "Distribution of Load Level using real line limits under initial conditions") +
-    annotate("text", x = .7, y = .2, label = "Mean Load Level = 19%",  size=7)
+   labs(x = "Alpha level", y ="Percentage of total lines", title = "Distribution of line Alpha level across network\nusing real line limits under initial conditions")+
+  annotate("text", x = .7, y = .2, label = "Mean Alpha = 5.4",  size=7) +
+   scale_x_reverse(breaks = seq(1,-.1, by=-0.1), labels= rev(LabelNames))
+
+ # edges %>%
+ #   filter(is.finite(alpha), Link.Limit!= 100000) %>%
+ #   ggplot(aes(x = LoadLevel)) + geom_histogram(bins = 10, aes(y = (..count..)/sum(..count..)))+ 
+ #  scale_y_continuous(labels = scales::percent, breaks = seq(0,.5, by= 0.05)) +
+ #  scale_x_continuous( breaks = seq(-1,5, by=0.1), labels = scales::percent)+ 
+ #   labs(x = "Load Level", y ="Percentage of total lines", title = "Distribution of Load Level using real line limits under initial conditions") +
+ #    annotate("text", x = .7, y = .2, label = "Mean Load Level = 19%",  size=7)
  ggsave(file.path(FiguresFolder,"LoadLevel.pdf"))
 
  edges %>%
@@ -513,7 +542,7 @@ ModelledCollapse <- NodeCollapse %>%
 
 NameOrder <- tibble(name = c("Real", "Modelled"), Colour = c("black", "blue")) %>% arrange(name)
 
- AlphaCollapse %>% #need to remove infinte values 
+AlphaCollapse %>% #need to remove infinte values 
   ggplot(aes(x = PercNum, y =  mean, group = alpha)) + 
   geom_line(aes(colour = as.numeric(alpha)), show.legend = TRUE) +  
   AlphaGrad +
@@ -592,7 +621,7 @@ AllRemovedEdges <- list.files(Deletion_Order_Folder, full.names = TRUE) %>%
 ```
 
 
-#TSNE that thang
+#Correllation and TSNE prep
 
 The TSNE shows that the real line limits are most similar to the constant line limits in terms of what failed
 
@@ -623,6 +652,10 @@ dups <-duplicated(TSNEcormat) #no duplicates
 
 key <- key#[!dups,] 
   
+```
+
+#TSNE
+```{r}
 set.seed(12358)
 TsnecorOut1 <-TSNEcormat[!dups,] %>%  
   Rtsne(verbose = TRUE, eta = 1, max_iter = 5000, perplexity = 50, check_duplicates = FALSE) 
@@ -635,10 +668,12 @@ tsne_corplot <- data.frame(x1 = TsnecorOut1$Y[,1],
 
 tsne_corplot %>%
   filter(!grepl("Real", alpha), !grepl("Model", alpha)) %>%
-    ggplot() + 
-  geom_point(aes(x=x1, y=y1, color= alpha))+
-    geom_point(data = filter(tsne_corplot, alpha2 == "Real Limits"), aes(x = x1, y = y1), colour = "dodgerblue2") +
-  geom_point(data = filter(tsne_corplot, alpha2 == "Linear Model Limits"), aes(x = x1, y = y1), colour = "black") +
+    ggplot(aes(x=x1, y=y1)) + 
+  geom_point(aes( color= alpha))+
+   geom_point(data = filter(tsne_corplot, alpha2 == "Real Limits"), aes(fill = 'Real'), color = 'black') +
+  geom_point(data =  filter(tsne_corplot, alpha2 == "Linear Model Limits"), aes(fill = 'Modelled'), color = 'blue') +
+  scale_fill_manual("Line Limit", values=c(1, 1),
+        guide=guide_legend(override.aes = list(colour=NameOrder$Colour))) +
 AlphaGrad +
     ggtitle("TSNE plot of proportional loading and real line limits\n correlation similarity across all simulations")
 ggsave(file.path(FiguresFolder, "TSNEcor.pdf"))
@@ -650,13 +685,36 @@ tsne_corplot %>%
    #scale_colour_brewer(palette = "Set1")+
   ggtitle("TSNE plot of the Edge Round removal corellation\n between all Simulations by method")
 ggsave(file.path(FiguresFolder, "TSNE_Method.pdf"))
-
-
 ```
 
-#Box plot of corellations
+
+#Boxplot of corellations
 
 ```{r}
+AlphaOrder <- c("alpha value 1","alpha value 1.05","alpha value 1.1","alpha value 1.2","alpha value 1.5","alpha value 2" ,"alpha value 3","alpha value 5","alpha value 6","alpha value 7","alpha value 10","alpha value 15","alpha value 20","alpha value 50","Infinite Limits" ,"Linear Model Limits")
+
+CleanNames <- function(df, TargetColumn, AlphaOrder){
+temp <- df  %>%
+  mutate_(temp1 = TargetColumn) %>%
+ mutate(temp2 = temp1,
+          temp2 = temp1 %>%
+           str_replace_all(., "_", " ") %>%
+           str_extract_all(., "([0-9])+")%>% as.numeric(.)/100,
+temp3 = temp1 %>%
+  str_replace_all(., "_", " ") %>%
+  str_extract_all(., "([aA-zZ\\s])+", T) %>%
+  paste0(., ifelse(is.na(temp2), "", temp2)),
+        temp3 = temp3 %>% as.factor() %>%
+  fct_relevel(., AlphaOrder)
+) %>%
+  select(temp3)
+temp <-temp  %>%set_names(paste0(TargetColumn,"2")) 
+ 
+temp <- bind_cols(df, temp)
+return(temp)
+}
+
+
 NewOrder <- key %>%
   arrange(alpha, SimID) %>%
   mutate(NewOrder = 1:nrow(.))
@@ -670,25 +728,36 @@ OrderedReal <- TSNEcormat[NewOrder$OriginalOrder, NewOrder$OriginalOrder]
 OrderedReal <- OrderedReal[,NewOrder$alpha =="Real_Limits"]
 
 
-AlphavsCor<- 1:nrow(RowIDS) %>% map_df(~{
+AlphavsCor <- 1:nrow(RowIDS) %>% map_df(~{
   temp <- OrderedReal [RowIDS$Start[.x]:RowIDS$Last[.x],]
   data_frame(alpha = RowIDS$alpha[.x], cor = diag(temp))
-}) 
-
-
-
-AlphavsCor %>%
-  filter(alpha != "Real_Limits") %>%
+}) %>%  filter(alpha != "Real_Limits") %>%
    filter(alpha != "Constant_105", alpha != "Constant_Volt_105" ) %>% ###This is added in to make only proportional!!!!
-  mutate(alpha = ifelse(alpha== "Infinite_Limits","Inf", alpha),
+  CleanNames(., "alpha", AlphaOrder) %>%
+  mutate( alpha = ifelse(alpha== "Infinite_Limits","Inf", alpha),
          alpha = gsub("alpha_value_", "", alpha),
-         alpha = as.numeric(alpha)/100) %>%
-    ggplot(aes(x= as.factor(alpha), y = cor, fill = alpha)) +
+         alpha = as.numeric(alpha)/100
+)
+
+
+TempPlot <-AlphavsCor %>%
+    ggplot(aes(x= alpha2, y = cor, fill = alpha)) +
   geom_boxplot() +
   scale_fill_gradientn(colors = c("red",   "limegreen"),
                           breaks = c(1,2,7,20,50),
                           trans = "log",
-                          values = scales::rescale((c(0, 6, 7, 20, 50))))+
+                          values = scales::rescale((c(0, 6, 7, 20, 50))))
+
+#Extract the colour codes from the ggplot object.
+AccBuild <- ggplot_build(TempPlot)
+AccBarCol <- c(unique(AccBuild$data[[1]][[1]]), "blue")
+names(AccBarCol) <-AlphavsCor$alpha2 %>%  levels
+rm(TempPlot)
+
+AlphavsCor %>%
+    ggplot(aes(x= alpha2, y = cor, fill = alpha2)) +
+  geom_boxplot() +
+    scale_fill_manual(values= AccBarCol) +
   scale_y_continuous( breaks = seq(0,1, by= 0.1)) +
   theme(legend.position = "none", 
         axis.text.x = element_text(angle = 45, hjust = 1)) +
@@ -717,7 +786,7 @@ AlphavsCor %>%
 #Make random forest classifier
 
 ```{r}
-setwd(354)
+setwd(PLwd)
 trainset <- createDataPartition(key$alpha2, p = .75, list = FALSE)
 
 ClassDict <- data_frame(alpha2 = unique(key$alpha2)) %>%
@@ -743,8 +812,13 @@ ConfMat <- confusionMatrix(ClassDict$alpha2[match(Out$predictions, ClassDict$ID)
                 ClassDict$alpha2[match(datasetTrain[-trainset,1], ClassDict$ID)]
                 ) 
 
+tibble(Estimate = ClassDict$alpha2[match(Out$predictions, ClassDict$ID)]%>% as.factor,
+      Truth = ClassDict$alpha2[match(datasetTrain[-trainset,1], ClassDict$ID)] %>% as.factor
+                ) %>%
+conf_mat(truth = Truth, estimate = Estimate)
+
 ConfMat$table %>%
-  xtable(.,  caption = "Confusion matrix of random forest", label = "tab:ConfusionForest") %>%
+  xtable(.,  caption = "Confusion matrix of random forest. Columns are truth, rows are estimate", label = "tab:ConfusionForest") %>%
   print(type = "latex", file = file.path(FiguresFolder, "ModelPerformance.txt"))
 
 ```
@@ -786,26 +860,28 @@ SimAttack[is.na(SimAttack)] <- 1
 }) %>% 
   rename(alpha  = type) %>%
   filter(alpha != "Real_Limits") %>%
-    mutate(alpha = ifelse(alpha== "Infinite_Limits","Inf", alpha),
-         alpha = gsub("alpha_value_", "", alpha),
-         alpha = as.numeric(alpha)/100) 
+    # mutate(alpha = ifelse(alpha== "Infinite_Limits","Inf", alpha),
+    #      alpha = gsub("alpha_value_", "", alpha),
+    #      alpha = as.numeric(alpha)/100) 
+      CleanNames(., "alpha", AlphaOrder) 
 }
 
 #Sets up the plot for comparing different metrics, the metric of choice info is then added on
 
-BasePlot <- function(df){df %>% 
-  ggplot(aes(x= as.factor(alpha), fill = alpha)) +
-  theme(legend.position = "none",  
-        axis.text.x = element_text(angle = 45, hjust = 1)) +
-   scale_fill_gradientn(colors = c("red",   "limegreen"),
-                          breaks = c(1,2,7,20,50),
-                          trans = "log",
-                          values = scales::rescale((c(0, 6, 7, 20, 50))))+
-  scale_y_continuous( breaks = seq(0,1, by= 0.1))}
+BasePlot <- function(df){
+
+  df %>%
+    ggplot(aes(x= alpha2, fill = alpha2)) +
+    theme(legend.position = "none",  
+        axis.text.x = element_text(angle = 45, hjust = 1))+
+    scale_fill_manual(values= AccBarCol) + #requires the colours that have been previously calculated in the boxplot chunk
+  scale_y_continuous( breaks = seq(0,1, by= 0.1))
+  
+  }
 
 AccuracyAnalysis <- DamageComparison(AttackRoundData, "Blackout")
 
-AccPlot <- AccuracyAnalysis %>% BasePlot
+AccPlot <- AccuracyAnalysis  %>% BasePlot
 
  AccPlot + geom_boxplot(aes(y = RMSE)) +
   labs(x = "alpha", title = "RMSE against real line limits for all calculated alpha levels") 
@@ -834,6 +910,7 @@ ggsave(file.path(FiguresFolder, "RMSEChangeGCfract.pdf"))
 
 ```
 
+#Create model predicting line-limits.
 
 ```{r}
 
@@ -906,7 +983,7 @@ metrics(. ,logY, .fitted)
 
 ElecCen1<- ElectricalCentrality(g)
 
-test <- c(as_data_frame(g, what = "vertices") %>% 
+StratAttackVect <- c(as_data_frame(g, what = "vertices") %>% 
   as_tibble %>%
       mutate(metric = degree(g)) %>%
       arrange(desc(metric)) %>% .$name,
@@ -939,9 +1016,8 @@ ElecCen1$NodeEC %>% arrange(-NodeEC) %>% .$Bus.Name,
 #Different strategies 1 load level
 ```{r}
 #The vector of alpha values to be tested
-alpha_vector <- c(1.05, 1.1, 5,  10, 20, 50)
+alpha_vector <- c(1.05, 1.1,1.5, 2, 5,  10, 20, 50)
 
-StratAttackWd <- "/media/jonno/Seagate Expansion Drive/ProportionalLoading/StratAttack"
 setwd(StratAttackWd)
 
 #Create the simulations for each of the alpha avalues using 100 simulations for each
@@ -954,7 +1030,7 @@ alpha_vector %>% walk(~{
     dir.create(folder)
   }
   
-  SaveMultiAttacks(gProp, test, folder, TotalAttackRounds = AttackRounds, CascadeMode = T)
+  SaveMultiAttacks(gProp, StratAttackVect, folder, TotalAttackRounds = AttackRounds, CascadeMode = T)
   
 }
   
@@ -1008,7 +1084,22 @@ AttackStratRoundData <- list.files(path = file.path(PLwd,"Attack_Strategy_Summar
     simulationID == "4" ~"Elec_Centrality",
     TRUE ~ "Centrality"
   ),
-  PercNum = NodesAttacked/958)
+  alpha1 = alpha %>%
+           str_replace_all(., "_", " ") %>%
+           str_extract_all(., "([0-9])+")%>% as.numeric(.)/100,
+alpha = alpha %>%
+  str_replace_all(., "_", " ") %>%
+  str_extract_all(., "([aA-zZ\\s])+", T) %>%
+  paste0(., ifelse(is.na(alpha1), "", alpha1)),
+  alpha = fct_relevel(alpha, "alpha value 5", after=2) %>%
+  fct_relevel(., "alpha value 2", after=2) %>%
+  fct_relevel(., "alpha value 1.5", after=2),
+  PercNum = NodesAttacked/958) %>% 
+  group_by(NodesAttacked, alpha) %>%
+  mutate(rankblack = min_rank(-Blackout),
+         rankGC = min_rank(GCfract)) %>%
+  ungroup
+
 
 
 AttackStratRoundData %>% #need to remove infinte values 
@@ -1020,11 +1111,106 @@ AttackStratRoundData %>% #need to remove infinte values
   facet_wrap(~alpha) +
   scale_x_continuous(labels=scales::percent) + 
   scale_y_continuous(labels=scales::percent) +
-  coord_cartesian(x = c(0,0.5)) +
+  coord_cartesian(x = c(0,0.4)) +
+  labs(title = "Change in Giant Componant and Blackout size as nodes are attacked" , 
+       x = "Percent of elements attacked", 
+       y = "Performance drop")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+   
+
+
+
+AttackStratRoundData %>%
+  filter(alpha == "Real Limits") %>%
+  ggplot(aes(x = PercNum, y =  GCfract, colour = simulationID)) + 
+  geom_line() +  
+  scale_fill_manual("Line Limit", values=c(1, 1)) +
+  #scale_x_continuous(labels=scales::percent) + 
+  scale_y_continuous(labels=scales::percent) +
+  #coord_cartesian(x = c(0,0.5)) +
   labs(title = "Change in Giant Componant and Blackout size as nodes are attacked" , 
        x = "Percent of elements attacked", 
        y = "Performance drop")
-   
+
+
+
+test2 <-AttackStratRoundData %>%
+  left_join(., 
+            AttackStratRoundData %>%
+  filter(alpha == "Real Limits") %>%
+  select(NodesAttacked, simulationID, rankblack, rankGC), 
+            by = c("NodesAttacked","simulationID")) %>% 
+  ungroup %>%
+         mutate(CorrectRank= rankblack.x==rankblack.y,
+                rankdiff = rankblack.x-rankblack.y,
+            r1 = as.factor(rankblack.x),
+            r2= as.factor(rankblack.y)
+    ) %>% ungroup
+
+MapPairs <- expand.grid(unique(test2$simulationID),unique(test2$alpha) ) %>%
+  as_tibble()
+
+test3 <- map2_df(.x= MapPairs$Var1, .y=MapPairs$Var2, ~{
+  test2   %>%
+    filter(alpha ==.y) %>%
+    group_by(alpha) %>%
+    mutate(acc = accuracy(., estimate = r1, truth =  r2),
+           AlphaRMSE = rmse(., estimate =rankblack.x, truth =  rankblack.y)) %>%
+    filter(simulationID ==.x) %>%
+    group_by(simulationID, alpha) %>%
+    summarise(RMSE = rmse(., estimate =rankblack.x, truth =  rankblack.y),
+              RSQ = rsq(., estimate =rankblack.x, truth =  rankblack.y),
+              CorrectRank = sum(CorrectRank, na.rm = T),
+              CorrectPerc = n(),
+              AlphaAccuracy = first(acc),
+              AlphaRMSE = first(AlphaRMSE),
+              accuracy = accuracy(., estimate = r1, truth =  r2)
+             )
+          
+  }) %>%
+  filter(alpha!="Real Limits")
+  
+
+test2 %>%
+  filter(alpha == "alpha value 5", simulationID=="Elec_Centrality") %>%
+mutate(rankdiff = rankblack.x -rankblack.y) %>%
+  ggplot(.,aes(x = NodesAttacked, y = rankdiff)) + geom_line() +
+  labs(title= "Damage rank difference for Electrical centrality for alpha = 5\n rank difference of 0 means rank matches real results")
+
+
+test3 %>%
+  ggplot(., aes(x = simulationID, y = accuracy, fill = simulationID)) +
+  geom_col() +
+  facet_wrap(~alpha) +
+  theme(axis.text.x = element_blank()) +
+    labs(title= "The overall rank accuracy in terms of damage done\nby line limit setting and Attack strategy", 
+       y = "Damage rank accuracy across entire simulation",
+       x = "Attack Strategy"
+      ) +
+  guides(fill = guide_legend(title = "Attack Strategy"))
+
+#boxplot
+test2 %>%
+  ggplot(., aes(x = alpha, y = rankdiff^2)) +
+  geom_boxplot() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+AccBar<- test3 %>%
+  group_by(alpha) %>%
+  summarise(Accuracy = first(AlphaAccuracy)) %>% #AlphaAccuracy
+  ggplot(aes(x= alpha, y = Accuracy, fill = alpha)) +
+  geom_col() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  labs(title= "The overall rank accuracy in terms of damage done by alpha level", 
+       y = "Damage rank accuracy across entire simulation",
+       x = "Line limit settings") 
+
+AccBar
+
+
++
+  scale_fill_manual(values = test$colour)
+
 ```
 
 
