@@ -70,6 +70,13 @@ setwd(PLwd)
 #Ensure there is powerflow
 g <- PowerFlow(gbase, "FECK40")
 
+g %>%
+  simplify(., remove.multiple = T, remove.loops = T) %>% 
+    plot(.,vertex.size=.8, edge.arrow.size=.4, vertex.label=NA)
+
+NetworkStats(g) %>%
+  xtable() %>% print(type = "latex", file = file.path(FiguresFolder, "NetworkStats.txt"))
+
 AttackRounds <- 1000
 
 #Create a reproducible attack order
@@ -91,7 +98,7 @@ saveRDS(DeleteOrders, filename)
                           breaks = c(1,2,7,20,50),
                           trans = "log",
                           values = scales::rescale((c(0, 6, 7, 20, 50))),
-                          name = "Alpha value") 
+                          name = expression(alpha*" level")) #"Alpha value"
 ```
 
 #Comparison of line limit methods
@@ -196,10 +203,12 @@ rm(TempPlot)
  edges %>%
    filter(is.finite(alpha), Link.Limit!= 100000) %>%
    ggplot(aes(x = LoadLevel)) + 
-   geom_histogram(bins = 10, aes(y = (..count..)/sum(..count..)), fill = rev(AccBarCol[-c(1:2)]))+ #remove the fill to make it black again
+   geom_histogram(bins = 10, aes(y = (..count..)/sum(..count..)))+ #remove the fill to make it black again , fill = rev(AccBarCol[-c(1:2)])
   scale_y_continuous(labels = scales::percent, breaks = seq(0,.5, by= 0.05)) +
-   labs(x = "Alpha level", y ="Percentage of total lines", title = "Distribution of line Alpha level across network\nusing real line limits under initial conditions")+
-  annotate("text", x = .7, y = .2, label = "Mean Alpha = 5.4",  size=7) +
+   labs(x = expression(alpha*" level"), 
+        y ="Percentage of total lines", 
+        title = expression("Distribution of "*alpha*" using real line limits under initial conditions"))+
+ # annotate("text", x = .7, y = .2, label = "Mean Alpha = 5.4",  size=7) +#removed as can be stated in caption
    scale_x_reverse(breaks = seq(1,-.1, by=-0.1), labels= rev(LabelNames))
 
  # edges %>%
@@ -225,19 +234,19 @@ rm(TempPlot)
  median(abs(edges$Link.Limit/edges$PowerFlow))
  mean(abs(edges$Link.Limit/edges$PowerFlow))
  
- edges %>%
-   filter(Link.Limit != 1e5,
-          Voltage !=0) %>%
-   ggplot(aes(x = abs(PowerFlow), y = LoadLevel, colour = as.factor(Voltage))) +
-   geom_point() +
-   labs(x= "Absolute Power Flow MW", y="Load Level", title = "Relationship between power flow and Load Level", colour = "Voltage") 
-  ggsave(file.path(FiguresFolder,"PowerFlowvsVoltage.pdf"))
+ # edges %>%
+ #   filter(Link.Limit != 1e5,
+ #          Voltage !=0) %>%
+ #   ggplot(aes(x = abs(PowerFlow), y = LoadLevel, colour = as.factor(Voltage))) +
+ #   geom_point() +
+ #   labs(x= "Absolute Power Flow MW", y="Load Level", title = "Relationship between power flow and Load Level", colour = "Voltage") 
+ #  ggsave(file.path(FiguresFolder,"PowerFlowvsVoltage.pdf"))
 
- edges %>%
-   filter(Link.Limit != 1e5,
-          Voltage != 0) %>%
-   ggplot(aes(x = PercFlow, y = PercLL, colour = as.factor(Voltage))) +
-   geom_point()
+ # edges %>%
+ #   filter(Link.Limit != 1e5,
+ #          Voltage != 0) %>%
+ #   ggplot(aes(x = PercFlow, y = PercLL, colour = as.factor(Voltage))) +
+ #   geom_point()
 
 ```
 
@@ -309,6 +318,7 @@ alpha_vector %>% walk(~{
 
 
 ##Modelled limits
+
 ```{r}
 
 #Set seed and create model input variables
@@ -316,31 +326,44 @@ set.seed(1)
 ModelInputVars <- g %>% as_data_frame %>%
   mutate(absPF = abs(PowerFlow),
          Voltage = as.factor(Voltage)) %>%
-  select(Link.Limit, Voltage, absPF, Link)
+  select(Link.Limit, Voltage, absPF, Link, Length)# %>%
+ # mutate_if(is.numeric, funs(scale(.) %>% as.vector))
 
 #generate k=10 crossfold validated model
 models <- ModelInputVars %>%
   filter(Link.Limit != 1e5) %>%
   crossv_kfold(k = 10) %>%
-  mutate(model = map(train, ~ lm(Link.Limit ~ Voltage + absPF, data = .)))
+  mutate(model = map(train, ~ lm(Link.Limit ~ Voltage + Length, data = .)))
 
 #create predictions for each edge in the network
 predictions <- models %>%
   unnest(map2(model, test, ~ augment(.x, newdata = .y)))
 
 #Look at coefficiients
- models %>%
+ModStats <- models %>%
   unnest(map(model, ~ tidy(.x))) %>%
    select(.id, term, estimate) %>%
-   spread(key = term, value = estimate)
+   spread(key = term, value = estimate) %>% 
+   select(-.id)
+   bind_rows(ModStats %>% summarise_all(mean) %>% mutate(type = "mean"),
+              ModStats %>% summarise_all(sd) %>% mutate(type = "sd")) %>%
+     select(type, everything()) %>%
+   #  mutate_if(is.numeric, signif, digits = 2) %>%
+xtable(.,  caption = "Mean model coefficients and standard deviation across 10-fold cross-validation", label = "tab:ModCoeffs") %>%
+   print(type = "latex", file = file.path(FiguresFolder, "ModCoeffs.txt"))
  
-
+   ggplot(aes(x = term, y = estimate)) + 
+   geom_boxplot()
+ 
  metrics(predictions ,Link.Limit, .fitted)
+ #mape 
+ mean(abs(predictions$.fitted-predictions$Link.Limit)/predictions$Link.Limit)
+ 
 
 predictions %>%
   mutate(residual = (.fitted - Link.Limit)/Link.Limit) %>% #doesn't need to be relative. absolute gives half a random cloud
-  select(Voltage, residual, absPF) %>%
-  ggplot(aes(log10(absPF), residual)) +
+  select(Voltage, residual, absPF, Length) %>%
+  ggplot(aes(log10(Length), residual)) +
   geom_point() +
   facet_wrap(~ Voltage)
 
@@ -520,7 +543,8 @@ PNodeDens <-  AttackRoundData %>%
  NodeCollapse <- rbind(SummaryofGC %>%
   select(PercNum, mean, alpha, GC05, GC95, sd) %>% mutate(type = "Giant componant size reduction"),
 SummaryofGC %>% 
-  select(PercNum, mPGfract, alpha, PG05, PG95, sdPGfract) %>% mutate(type = "Blackout size") %>%
+  select(PercNum, mPGfract, alpha, PG05, PG95, sdPGfract) %>% 
+  mutate(type = "Blackout size") %>%
   rename(mean = mPGfract, GC05 = PG05, GC95 = PG95, sd = sdPGfract)
 ) %>% mutate(Target = "Node") %>%
    filter(alpha != "Constant 105", alpha != "Constant Volt_105" )
@@ -554,7 +578,7 @@ AlphaCollapse %>% #need to remove infinte values
   scale_x_continuous(labels=scales::percent) + 
   scale_y_continuous(labels=scales::percent) +
   coord_cartesian(x = c(0,0.5)) +
-  labs(title = "Change in Giant Componant and Blackout size as nodes are attacked" , 
+  labs(title = "Change in Giant componant and Blackout size as nodes are attacked" , 
        x = "Percent of elements attacked", 
        y = "Performance drop")
  
@@ -573,8 +597,33 @@ AlphaCollapse %>% #need to remove infinte values
   scale_x_continuous(labels=scales::percent) + 
   scale_y_continuous(labels=scales::percent) +
   coord_cartesian(x = c(0,0.5))  +
-  labs(title = "Size of 95-05 confidence interval as attack developes" , x = "Percent of elements attacked", y = "standard deviation")
+  labs(title = "Standard deviation of damage across all simulations" , x = "Percent of elements attacked", y = "Standard deviation of damage")
  ggsave(file.path(FiguresFolder,"SDchange.pdf"))
+ 
+ 
+ NodeCollapse3 <- bind_rows(AlphaCollapse %>% mutate(alpha = as.character(alpha)), ModelledCollapse) %>%
+   left_join(., select(RealCollapse, PercNum, Realmean = mean, Realsd = sd , type) , by = c("PercNum", "type"))
+   
+ Inputs <- expand.grid(unique(NodeCollapse3$alpha), unique(NodeCollapse3$type)) 
+  
+MeanRMSE <- map2_df(.x = Inputs$Var1, .y = Inputs$Var2,~{
+    NodeCollapse3 %>%
+      filter(alpha == .x, type == .y) %>%
+     metrics(Realmean, mean) %>%
+     mutate(alpha = .x, type = .y)
+  } ) %>%
+  select(-rsq) %>%
+  spread(key = type, value = rmse)
+
+Meansd <- map2_df(.x = Inputs$Var1, .y = Inputs$Var2,~{
+    NodeCollapse3 %>%
+      filter(alpha == .x, type == .y) %>%
+     metrics(Realsd, sd) %>%
+     mutate(alpha = .x, type = .y)
+  } ) %>%
+  select(-rsq) %>%
+  spread(key = type, value = rmse)
+
  
 ```
 
@@ -585,16 +634,16 @@ Get the round number that an edge was deleted.
 
 ```{r}
 
-FolderVect <- list.files(path = Saved_Sims)
-FileVect <- list.files(path = Deletion_Order_Folder) %>% gsub(".rds", "",.)
-new.type <- FolderVect[!(FolderVect %in% FileVect)]
+FolderVect <- list.files(path = Saved_Sims) #folder where all the alpha FOLDERS are
+FileVect <- list.files(path = Deletion_Order_Folder) %>% gsub(".rds", "",.) #folder where all the deletion order FILES are1
+new.type <- FolderVect[!(FolderVect %in% FileVect)] #The FOLDERS that are not present as FILES
 
-if(length(new.type)){
+if(length(new.type)>0){
 file.path(Saved_Sims, new.type) %>%
   walk( ~{
-    print(.x)
+    print(.x) #print name of folder where deletion order will be calculated
     
-  Removeddf <- list.files(path = .x, full.names = TRUE) %>% 
+  Removeddf <- list.files(path = .x, full.names = TRUE) %>% #list the different network of network rds files present
     map_df(~{
         file <- .x
         print(file)
@@ -617,6 +666,7 @@ file.path(Saved_Sims, new.type) %>%
   
 AllRemovedEdges <- list.files(Deletion_Order_Folder, full.names = TRUE) %>%
   map_df(~read_rds(.x))
+
 
 ```
 
@@ -656,35 +706,35 @@ key <- key#[!dups,]
 
 #TSNE
 ```{r}
-set.seed(12358)
-TsnecorOut1 <-TSNEcormat[!dups,] %>%  
-  Rtsne(verbose = TRUE, eta = 1, max_iter = 5000, perplexity = 50, check_duplicates = FALSE) 
-
-tsne_corplot <- data.frame(x1 = TsnecorOut1$Y[,1], 
-                        y1 = TsnecorOut1$Y[,2]) %>%
-  bind_cols(key) %>%
-  mutate(alpha = sub("alpha_value_", "", alpha) %>% as.numeric()/100,
-         alpha = ifelse(alpha2 == "Infinite", Inf, alpha))
-
-tsne_corplot %>%
-  filter(!grepl("Real", alpha), !grepl("Model", alpha)) %>%
-    ggplot(aes(x=x1, y=y1)) + 
-  geom_point(aes( color= alpha))+
-   geom_point(data = filter(tsne_corplot, alpha2 == "Real Limits"), aes(fill = 'Real'), color = 'black') +
-  geom_point(data =  filter(tsne_corplot, alpha2 == "Linear Model Limits"), aes(fill = 'Modelled'), color = 'blue') +
-  scale_fill_manual("Line Limit", values=c(1, 1),
-        guide=guide_legend(override.aes = list(colour=NameOrder$Colour))) +
-AlphaGrad +
-    ggtitle("TSNE plot of proportional loading and real line limits\n correlation similarity across all simulations")
-ggsave(file.path(FiguresFolder, "TSNEcor.pdf"))
-
-
-tsne_corplot %>%
-    ggplot() + 
-  geom_point(aes(x=x1, y=y1, color= alpha2))+ 
-   #scale_colour_brewer(palette = "Set1")+
-  ggtitle("TSNE plot of the Edge Round removal corellation\n between all Simulations by method")
-ggsave(file.path(FiguresFolder, "TSNE_Method.pdf"))
+# set.seed(12358)
+# TsnecorOut1 <-TSNEcormat[!dups,] %>%  
+#   Rtsne(verbose = TRUE, eta = 1, max_iter = 5000, perplexity = 50, check_duplicates = FALSE) 
+# 
+# tsne_corplot <- data.frame(x1 = TsnecorOut1$Y[,1], 
+#                         y1 = TsnecorOut1$Y[,2]) %>%
+#   bind_cols(key) %>%
+#   mutate(alpha = sub("alpha_value_", "", alpha) %>% as.numeric()/100,
+#          alpha = ifelse(alpha2 == "Infinite", Inf, alpha))
+# 
+# tsne_corplot %>%
+#   filter(!grepl("Real", alpha), !grepl("Model", alpha)) %>%
+#     ggplot(aes(x=x1, y=y1)) + 
+#   geom_point(aes( color= alpha))+
+#    geom_point(data = filter(tsne_corplot, alpha2 == "Real Limits"), aes(fill = 'Real'), color = 'black') +
+#   geom_point(data =  filter(tsne_corplot, alpha2 == "Linear Model Limits"), aes(fill = 'Modelled'), color = 'blue') +
+#   scale_fill_manual("Line Limit", values=c(1, 1),
+#         guide=guide_legend(override.aes = list(colour=NameOrder$Colour))) +
+# AlphaGrad +
+#     ggtitle("TSNE plot of proportional loading and real line limits\n correlation similarity across all simulations")
+# ggsave(file.path(FiguresFolder, "TSNEcor.pdf"))
+# 
+# 
+# tsne_corplot %>%
+#     ggplot() + 
+#   geom_point(aes(x=x1, y=y1, color= alpha2))+ 
+#    #scale_colour_brewer(palette = "Set1")+
+#   ggtitle("TSNE plot of the Edge Round removal corellation\n between all Simulations by method")
+# ggsave(file.path(FiguresFolder, "TSNE_Method.pdf"))
 ```
 
 
@@ -761,7 +811,7 @@ AlphavsCor %>%
   scale_y_continuous( breaks = seq(0,1, by= 0.1)) +
   theme(legend.position = "none", 
         axis.text.x = element_text(angle = 45, hjust = 1)) +
-  labs(x = "alpha level", y ="Corellation with real line limits", title= "Edge removal rank corellation against real limits")
+  labs(x = expression(alpha*" level"), y ="Correlation with real line limits", title= "Edge removal rank correlation against real limits")
 
 ggsave(file.path(FiguresFolder, "CorBoxPlot.pdf"))
 
@@ -785,46 +835,49 @@ AlphavsCor %>%
 
 #Make random forest classifier
 
+removed from paper
+
 ```{r}
-setwd(PLwd)
-trainset <- createDataPartition(key$alpha2, p = .75, list = FALSE)
-
-ClassDict <- data_frame(alpha2 = unique(key$alpha2)) %>%
-  mutate(ID = 1:nrow(.))
-
-key <- key %>% left_join(., ClassDict, by = "alpha2")
-
-datasetTrain <- bind_cols(select(key, ID), as_tibble(TSNEcormat)) %>% as.matrix()
-
-rf_ranger_default <- ranger(data = datasetTrain[trainset,],
-                              num.trees = 500,
-                              mtry = 500,
-                              dependent.variable.name = "ID", 
-                              num.threads = 7, 
-                              classification = TRUE)
-  
-
-Out<- predict(rf_ranger_default , data = datasetTrain[-trainset,], type = "response", predict.all = F)
-confusionMatrix(Out$predictions, datasetTrain[-trainset,1])
-
-#With correct class names
-ConfMat <- confusionMatrix(ClassDict$alpha2[match(Out$predictions, ClassDict$ID)],
-                ClassDict$alpha2[match(datasetTrain[-trainset,1], ClassDict$ID)]
-                ) 
-
-tibble(Estimate = ClassDict$alpha2[match(Out$predictions, ClassDict$ID)]%>% as.factor,
-      Truth = ClassDict$alpha2[match(datasetTrain[-trainset,1], ClassDict$ID)] %>% as.factor
-                ) %>%
-conf_mat(truth = Truth, estimate = Estimate)
-
-ConfMat$table %>%
-  xtable(.,  caption = "Confusion matrix of random forest. Columns are truth, rows are estimate", label = "tab:ConfusionForest") %>%
-  print(type = "latex", file = file.path(FiguresFolder, "ModelPerformance.txt"))
+# setwd(PLwd)
+# trainset <- createDataPartition(key$alpha2, p = .75, list = FALSE)
+# 
+# ClassDict <- data_frame(alpha2 = unique(key$alpha2)) %>%
+#   mutate(ID = 1:nrow(.))
+# 
+# key <- key %>% left_join(., ClassDict, by = "alpha2")
+# 
+# datasetTrain <- bind_cols(select(key, ID), as_tibble(TSNEcormat)) %>% as.matrix()
+# 
+# rf_ranger_default <- ranger(data = datasetTrain[trainset,],
+#                               num.trees = 500,
+#                               mtry = 500,
+#                               dependent.variable.name = "ID", 
+#                               num.threads = 7, 
+#                               classification = TRUE)
+#   
+# 
+# Out<- predict(rf_ranger_default , data = datasetTrain[-trainset,], type = "response", predict.all = F)
+# confusionMatrix(Out$predictions, datasetTrain[-trainset,1])
+# 
+# #With correct class names
+# ConfMat <- confusionMatrix(ClassDict$alpha2[match(Out$predictions, ClassDict$ID)],
+#                 ClassDict$alpha2[match(datasetTrain[-trainset,1], ClassDict$ID)]
+#                 ) 
+#
+#Yardstick version. Doesn't help much unless I have made the whole process using modelr
+# tibble(Estimate = ClassDict$alpha2[match(Out$predictions, ClassDict$ID)]%>% as.factor,
+#       Truth = ClassDict$alpha2[match(datasetTrain[-trainset,1], ClassDict$ID)] %>% as.factor
+#                 ) %>%
+# conf_mat(truth = Truth, estimate = Estimate)
+# 
+# ConfMat$table %>%
+#   xtable(.,  caption = "Confusion matrix of random forest. Columns are truth, rows are estimate", label = "tab:ConfusionForest") %>%
+#   print(type = "latex", file = file.path(FiguresFolder, "ModelPerformance.txt"))
 
 ```
 
 
-#Analysing damage done
+#Damage analysis
 This chunk produces Boxplots of the evaluation metrics for each simulation type.
 It isn't hugley interesting so isn't included.
 
@@ -881,10 +934,16 @@ BasePlot <- function(df){
 
 AccuracyAnalysis <- DamageComparison(AttackRoundData, "Blackout")
 
+AccuracyAnalysis %>%
+  select(-SimulationID,-alpha) %>%
+  group_by(alpha2) %>%
+  summarise_all(funs(mean, median))
+
 AccPlot <- AccuracyAnalysis  %>% BasePlot
 
  AccPlot + geom_boxplot(aes(y = RMSE)) +
-  labs(x = "alpha", title = "RMSE against real line limits for all calculated alpha levels") 
+  labs(x = expression(alpha*" level"), 
+       title = expression("RMSE against real line limits for all calculated "*alpha*" levels") )
 ggsave(file.path(FiguresFolder, "RMSEChange.pdf"))
 
 
@@ -895,17 +954,30 @@ AccPlot + geom_boxplot(aes(y = MAE)) +
   labs(x = "alpha", title = "MAE against real line limits as alpha increases") 
 
 AccPlot + geom_boxplot(aes(y = log(MAPE))) +
-  labs(x = "alpha", title = "MAPE against real line limits as alpha increases") 
+  labs(x = "alpha", title = "MAPE agtest %>%
+  group_by(alpha, alpha1) %>%
+  summarise(Accuracy = first(AlphaAccuracy)) %>% #AlphaAccuracy
+  ggplot(aes(x= alpha, y = Accuracy, fill = alpha)) +
+  geom_col() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  labs(title= "The overall rank accuracy in terms of damage done by alpha level", 
+       y = "Damage rank accuracy across entire simulation",
+       x = "Line limit settings") +
+ainst real line limits as alpha increases") 
 
 
 #Analysis for giant component size
 
 AccuracyAnalysisGC <- DamageComparison(AttackRoundData, "GCfract")
 
+AccuracyAnalysisGC %>%
+  select(-SimulationID,-alpha) %>%
+  group_by(alpha2) %>%
+  summarise_all(funs(mean, median), na.rm = T)
 
-AccuracyAnalysisGC %>% BasePlot + geom_boxplot(aes(y = RMSE)) +
-  labs(x = "alpha", title = "GCfract RMSE against real line limits as alpha increases") 
-ggsave(file.path(FiguresFolder, "RMSEChangeGCfract.pdf"))
+# AccuracyAnalysisGC %>% BasePlot + geom_boxplot(aes(y = RMSE)) +
+#   labs(x = "alpha", title = "GCfract RMSE against real line limits as alpha increases") 
+# ggsave(file.path(FiguresFolder, "RMSEChangeGCfract.pdf"))
 
 
 ```
@@ -978,6 +1050,7 @@ metrics(. ,logY, .fitted)
 
 #strategy difference
 
+#the entropic degree function does not load properly find out why
 
 ```{r}
 
@@ -1043,7 +1116,7 @@ folder <- "Real_Limits"
     dir.create(folder)
   }
 
-SaveMultiAttacks(g,  test, folder, TotalAttackRounds = AttackRounds, CascadeMode = T)
+SaveMultiAttacks(g,  StratAttackVect, folder, TotalAttackRounds = AttackRounds, CascadeMode = T)
 
 setwd(StratAttackWd)
 folder <- "Infinite_Limits"
@@ -1052,7 +1125,7 @@ folder <- "Infinite_Limits"
     dir.create(folder)
   }
 
-SaveMultiAttacks(g, test, folder, TotalAttackRounds = AttackRounds, CascadeMode = F)
+SaveMultiAttacks(g, StratAttackVect, folder, TotalAttackRounds = AttackRounds, CascadeMode = F)
 
 setwd(StratAttackWd)
 folder <- "Linear_Model_Limits"
@@ -1061,7 +1134,7 @@ folder <- "Linear_Model_Limits"
     dir.create(folder)
   }
 
-SaveMultiAttacks(LinModLims, test, folder, TotalAttackRounds = AttackRounds, CascadeMode = T)
+SaveMultiAttacks(LinModLims, StratAttackVect, folder, TotalAttackRounds = AttackRounds, CascadeMode = T)
 
 ```
 
@@ -1102,7 +1175,8 @@ alpha = alpha %>%
 
 
 
-AttackStratRoundData %>% #need to remove infinte values 
+AttackStratRoundData %>% #need to remove infinte values
+  filter(alpha %in% c("alpha value 5", "Infinite Limits", "Linear Model Limits", "Real Limits")) %>%
   ggplot(aes(x = PercNum, y =  GCfract, colour = simulationID)) + 
   geom_line() +  
   #geom_line(data = RealCollapse, aes(fill = 'Real'), color = 'black') +
@@ -1112,27 +1186,12 @@ AttackStratRoundData %>% #need to remove infinte values
   scale_x_continuous(labels=scales::percent) + 
   scale_y_continuous(labels=scales::percent) +
   coord_cartesian(x = c(0,0.4)) +
-  labs(title = "Change in Giant Componant and Blackout size as nodes are attacked" , 
+  labs(title = "Change in Blackout size as nodes are attacked using multiple strategies" , 
        x = "Percent of elements attacked", 
-       y = "Performance drop")+
+       y = "Performance drop",
+       colour = "Attack Strategy")+
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
-   
-
-
-
-AttackStratRoundData %>%
-  filter(alpha == "Real Limits") %>%
-  ggplot(aes(x = PercNum, y =  GCfract, colour = simulationID)) + 
-  geom_line() +  
-  scale_fill_manual("Line Limit", values=c(1, 1)) +
-  #scale_x_continuous(labels=scales::percent) + 
-  scale_y_continuous(labels=scales::percent) +
-  #coord_cartesian(x = c(0,0.5)) +
-  labs(title = "Change in Giant Componant and Blackout size as nodes are attacked" , 
-       x = "Percent of elements attacked", 
-       y = "Performance drop")
-
-
+ggsave(file.path(FiguresFolder,"AttackStratDiff.pdf"))
 
 test2 <-AttackStratRoundData %>%
   left_join(., 
@@ -1150,6 +1209,7 @@ test2 <-AttackStratRoundData %>%
 MapPairs <- expand.grid(unique(test2$simulationID),unique(test2$alpha) ) %>%
   as_tibble()
 
+#calc error
 test3 <- map2_df(.x= MapPairs$Var1, .y=MapPairs$Var2, ~{
   test2   %>%
     filter(alpha ==.y) %>%
@@ -1158,14 +1218,15 @@ test3 <- map2_df(.x= MapPairs$Var1, .y=MapPairs$Var2, ~{
            AlphaRMSE = rmse(., estimate =rankblack.x, truth =  rankblack.y)) %>%
     filter(simulationID ==.x) %>%
     group_by(simulationID, alpha) %>%
-    summarise(RMSE = rmse(., estimate =rankblack.x, truth =  rankblack.y),
+    summarise(RMSE = rmse(., estimate =rankblack.x, truth =  rankblack.y), #measures for each sim ID for that class
               RSQ = rsq(., estimate =rankblack.x, truth =  rankblack.y),
               CorrectRank = sum(CorrectRank, na.rm = T),
               CorrectPerc = n(),
               AlphaAccuracy = first(acc),
-              AlphaRMSE = first(AlphaRMSE),
+              AlphaRMSE = first(AlphaRMSE), #measures the whole class
               accuracy = accuracy(., estimate = r1, truth =  r2)
-             )
+             ) %>% 
+    ungroup
           
   }) %>%
   filter(alpha!="Real Limits")
@@ -1189,27 +1250,147 @@ test3 %>%
       ) +
   guides(fill = guide_legend(title = "Attack Strategy"))
 
-#boxplot
-test2 %>%
-  ggplot(., aes(x = alpha, y = rankdiff^2)) +
-  geom_boxplot() +
-    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+test <- test3 %>%
+  mutate(alpha1 = alpha %>%
+           str_replace_all(., "_", " ") %>%
+           str_extract_all(., "([0-9\\.])+")%>% as.numeric(.))
 
-AccBar<- test3 %>%
-  group_by(alpha) %>%
+TempPlot<- test %>%
+  group_by(alpha, alpha1) %>%
   summarise(Accuracy = first(AlphaAccuracy)) %>% #AlphaAccuracy
-  ggplot(aes(x= alpha, y = Accuracy, fill = alpha)) +
+  ggplot(aes(x= alpha, y = Accuracy, fill = alpha1)) +
+  geom_col() +
+  scale_fill_gradientn(colors = c("red",   "limegreen"),
+                          breaks = c(1,2,7,20,50),
+                          trans = "log",
+                          values = scales::rescale((c(0, 6, 7, 20, 50))))
+
+
+AccBuild <- ggplot_build(TempPlot)
+AccBarCol <- c(unique(AccBuild$data[[1]][[1]]), "blue")
+names(AccBarCol) <-test$alpha %>%  droplevels %>% levels
+rm(TempPlot)
+
+ test %>%
+  group_by(alpha, alpha1) %>%
+  summarise(Accuracy = first(AlphaRMSE)) %>% #AlphaAccuracy
+  ggplot(aes(x= alpha, y = Accuracy)) +
   geom_col() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))+
-  labs(title= "The overall rank accuracy in terms of damage done by alpha level", 
-       y = "Damage rank accuracy across entire simulation",
-       x = "Line limit settings") 
+  labs(title= "The overall rank RMSE in terms of damage done by alpha level", 
+       y = "Damage rank RMSE across entire simulation",
+       x = "Line limit settings") #+
+#  scale_fill_manual(values = AccBarCol, guide=FALSE) 
+ggsave(file.path(FiguresFolder,"AttackStratRankPerf.pdf")) 
+   
+ #this looks like a better way of showing the data... but the simulations have different numbers of attacks so it may not be appropriate.
+test %>%
+  ggplot(aes(x= alpha, y = RMSE, fill = alpha)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  labs(title= "The overall rank RMSE in terms of damage done by alpha level", 
+       y = "Damage rank RMSE across entire simulation",
+       x = "Line limit settings") +
+  scale_fill_manual(values = AccBarCol, guide=FALSE) 
 
-AccBar
+test %>% select(alpha, accuracy, RMSE) %>%group_by(alpha) %>% summarise_all(funs(mean, median))
+                                       
+```
 
 
-+
-  scale_fill_manual(values = test$colour)
+#Plot geopoints
+```{r}
+
+points <- read_csv("/home/jonno/Downloads/point.csv")
+
+points <- get.vertex.attribute(gbase, "name") %>% tibble(name = .) %>%
+  left_join(., points, by = c("name" = "Edges")) %>%
+  group_by(name) %>%
+  mutate(counts = n()) %>%
+  ungroup %>%
+  slice(-219) %>%
+  mutate(Lat = ifelse(name == "TILB40" ,51.46006, Lat))
+
+NApoints <-points %>%
+  filter(is.na(Lon)) %>%
+  pull(name)
+
+g2 <- set.vertex.attribute(gbase, "Lat", value = points$Lat) %>%
+  set.vertex.attribute(., "Lon",value =  points$Lon)
+
+AllPoints <- ego(g2, nodes = NApoints) %>% map_df(~{
+  
+ points %>%
+    filter(name %in% names(.x)) %>%
+    summarise(Lon = mean(Lon, na.rm = T),
+              Lat = mean(Lat, na.rm = T))
+  
+})
+
+#Map to regions of UK
+
+ShapeFolder <- "/home/jonno/Dropbox/SSE/Empty Homes/ShapeFiles/Local_Authority_Districts_December_2014_Ultra_Generalised_Clipped_Boundaries_in_Great_Britain"
+
+library(sf)
+library(rgdal)
+library(RColorBrewer)
+UKLADS <- readOGR(file.path(ShapeFolder, "Local_Authority_Districts_December_2014_Ultra_Generalised_Clipped_Boundaries_in_Great_Britain.shp"))
+Regions <- read_csv(file.path("/home/jonno/Dropbox/MScThesis", "Local_Authority_District_to_Region_December_2017_Lookup_in_England_.csv"))
+  
+g3 <- set.vertex.attribute(g2, "Lat", index = NApoints, value = AllPoints$Lat) %>%
+  set.vertex.attribute(., "Lon",index = NApoints, value = AllPoints$Lon)
+
+Positioning <- matrix(c(get.vertex.attribute(g3, "Lon"),
+                        get.vertex.attribute(g3, "Lat")),
+                      ncol = 2)
+
+
+g3 %>%
+  simplify(., remove.multiple = T, remove.loops = T) %>% 
+    plot(.,vertex.size=.8, edge.arrow.size=.4, vertex.label=NA, layout = Positioning)
+
+
+test <- Positioning %>% as.tibble %>%
+  rename(Longitude = V1, Latitude = V2)
+
+# Assignment modified according
+coordinates(test) <- ~ Longitude + Latitude
+
+#After you create your list of latlongs you must set the proj4string to longlat
+proj4string(test) <- CRS("+proj=longlat")
+
+#Before you re-set the proj4string to the one from sodo you must actually convert #your coordinates to the new projection
+test <- spTransform(test, proj4string(UKLADS))
+
+# Set the projection of the SpatialPointsDataFrame using the projection of the shapefile
+proj4string(test) <- proj4string(UKLADS)
+
+ColourLegend<- tibble(RGN17NM = c(unique(Regions$RGN17NM), "Scotland", "Wales"), colours = brewer.pal(11, "Paired"))
+
+test2 <- over(test, UKLADS) %>%
+  left_join(., Regions, by = c("lad14cd"="LAD17CD")) %>%
+  mutate(RGN17NM = ifelse(grepl("W",lad14cd),"Wales", RGN17NM),
+         RGN17NM = ifelse(grepl("S",lad14cd),"Scotland", RGN17NM)) %>%
+  left_join(., ColourLegend)
+
+
+
+
+g4 <- set.vertex.attribute(g3, "Region", value = test2$RGN17NM) %>%
+  set.vertex.attribute(., "color", value = test2$colours)
+
+
+
+par(mfrow=c(1,2), mar=rep(1,4))
+
+g4 %>% 
+  simplify(., remove.multiple = T, remove.loops = T) %>% 
+    plot(.,vertex.size=4, vertex.label=NA, layout = Positioning)
+
+
+g4 %>% 
+  simplify(., remove.multiple = T, remove.loops = T) %>% 
+    plot(.,vertex.size=3, vertex.label=NA)
 
 ```
 
