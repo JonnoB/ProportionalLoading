@@ -52,7 +52,8 @@ Functions <-"/home/jonno/Create_ETYS_network/Functions"
 Tariff <- file.path(basewd,"Tariff and Transport")
 PLwd <- "/media/jonno/Seagate Expansion Drive/ProportionalLoading"
 Saved_Sims <- file.path(PLwd, "Saved_Sims")
-Deletion_Order_Folder <- "/media/jonno/Seagate Expansion Drive/ProportionalLoading/DeletionOrder"
+#Deletion_Order_Folder <-  file.path(PLwd, "DeletionOrder") #Only one of the deletion order folders is needed. Either Nodes or Edges
+Deletion_Order_Folder <- file.path(PLwd, "DeletionOrder_Nodes")
 StratAttackWd <- "/media/jonno/Seagate Expansion Drive/ProportionalLoading/StratAttack"
 
 source("/home/jonno/Create_ETYS_network/SubCode/LoadData2.R")
@@ -570,8 +571,8 @@ AlphaCollapse %>% #need to remove infinte values
   ggplot(aes(x = PercNum, y =  mean, group = alpha)) + 
   geom_line(aes(colour = as.numeric(alpha)), show.legend = TRUE) +  
   AlphaGrad +
-  geom_line(data = RealCollapse, aes(fill = 'Real'), color = 'black') +
-  geom_line(data = ModelledCollapse, aes(fill = 'Modelled'), color = 'blue') +
+  geom_line(data = RealCollapse, aes(fill = 'Real'), color = 'black', linetype ="longdash") +
+  geom_line(data = ModelledCollapse, aes(fill = 'Modelled'), color = 'blue', linetype ="twodash") +
   scale_fill_manual("Line Limit", values=c(1, 1),
         guide=guide_legend(override.aes = list(colour=NameOrder$Colour))) +
   facet_grid(~type) +
@@ -589,8 +590,8 @@ AlphaCollapse %>% #need to remove infinte values
   ggplot(aes(x = PercNum, y =  sd, group = alpha)) + 
   geom_line(aes(colour = as.numeric(alpha)), show.legend = TRUE) +  
   AlphaGrad +
-  geom_line(data = RealCollapse, aes(fill = 'Real'), color = 'black') +
-  geom_line(data = ModelledCollapse, aes(fill = 'Modelled'), color = 'blue') +
+  geom_line(data = RealCollapse, aes(fill = 'Real'), color = 'black', linetype ="longdash") +
+  geom_line(data = ModelledCollapse, aes(fill = 'Modelled'), color = 'blue', linetype ="twodash")  +
   scale_fill_manual("Line Limit", values=c(1, 1),
         guide=guide_legend(override.aes = list(colour=NameOrder$Colour))) +
   facet_grid(~type) +
@@ -635,8 +636,9 @@ Get the round number that an edge was deleted.
 ```{r}
 
 FolderVect <- list.files(path = Saved_Sims) #folder where all the alpha FOLDERS are
-FileVect <- list.files(path = Deletion_Order_Folder) %>% gsub(".rds", "",.) #folder where all the deletion order FILES are1
+FileVect <- list.files(path = Deletion_Order_Folder) %>% gsub(".rds", "",.) #folder where all the deletion order FILES are
 new.type <- FolderVect[!(FolderVect %in% FileVect)] #The FOLDERS that are not present as FILES
+TargetType <- "Node" #Either Node or Edge depending on which deletion order is being used
 
 if(length(new.type)>0){
 file.path(Saved_Sims, new.type) %>%
@@ -647,8 +649,8 @@ file.path(Saved_Sims, new.type) %>%
     map_df(~{
         file <- .x
         print(file)
-        read_rds(file ) %>%
-          RoundRemoved()  %>%
+        read_rds(file) %>%
+          RoundRemoved(type = TargetType)  %>%
           mutate(Sim = gsub(".rds", "",file) %>% basename)
       }
     ) %>%
@@ -668,6 +670,111 @@ AllRemovedEdges <- list.files(Deletion_Order_Folder, full.names = TRUE) %>%
   map_df(~read_rds(.x))
 
 
+```
+
+#Granularity and accuracy
+```{r}
+AlphaOrder <- c("alpha value 1","alpha value 1.05","alpha value 1.1","alpha value 1.2","alpha value 1.5","alpha value 2" ,"alpha value 3","alpha value 5","alpha value 6","alpha value 7","alpha value 10","alpha value 15","alpha value 20","alpha value 50","Infinite Limits" ,"Linear Model Limits")
+
+CleanNames <- function(df, TargetColumn, AlphaOrder){
+temp <- df  %>%
+  mutate_(temp1 = TargetColumn) %>%
+ mutate(temp2 = temp1,
+          temp2 = temp1 %>%
+           str_replace_all(., "_", " ") %>%
+           str_extract_all(., "([0-9])+")%>% as.numeric(.)/100,
+temp3 = temp1 %>%
+  str_replace_all(., "_", " ") %>%
+  str_extract_all(., "([aA-zZ\\s])+", T) %>%
+  paste0(., ifelse(is.na(temp2), "", temp2)),
+        temp3 = temp3 %>% as.factor() %>%
+  fct_relevel(., AlphaOrder)
+) %>%
+  select(temp3)
+temp <-temp  %>% set_names(paste0(TargetColumn,"2")) 
+ 
+temp <- bind_cols(df, temp)
+return(temp)
+}
+
+ test <- AllRemovedEdges %>%
+  group_by(Sim, alpha) %>%
+  summarise(rounds = max(RoundRemoved, na.rm = T)) %>%
+   ungroup
+
+ 
+ #Plot the number of rounds
+test %>%  CleanNames(., "alpha", AlphaOrder2) %>%
+  mutate( alpha = ifelse(alpha== "Infinite_Limits","Inf", alpha),
+         alpha = gsub("alpha_value_", "", alpha),
+         alpha = as.numeric(alpha)/100
+) %>%
+  ggplot(aes(x = alpha2, y = rounds)) + geom_boxplot()+
+    theme(legend.position = "none", 
+        axis.text.x = element_text(angle = 45, hjust = 1)) 
+
+
+test2 <- AllRemovedEdges %>%
+  group_by(Sim, alpha) %>%
+  mutate(decile = ntile(RoundRemoved, 10))
+
+TSNEdf <- AllRemovedEdges %>%
+  group_by(Sim, alpha) %>%
+  mutate(ntile = ntile(RoundRemoved, 20)) %>%
+  ungroup %>%
+  spread(key = Edges, value = ntile, fill = 0)
+
+
+# testList <- file.path("/media/jonno/Seagate Expansion Drive/ProportionalLoading/Saved_Sims/Linear_Model_Limits",
+#                   "Simulation_ID_1.rds") %>% 
+#   read_rds
+
+
+RealPreCor  <- AllRemovedEdges %>%
+  filter(alpha == "Real_Limits") %>%
+  select(-alpha)
+
+PreCorRemoved  <- AllRemovedEdges %>%
+  filter(alpha != "Real_Limits") %>%
+  left_join(., RealPreCor, by = c("Edges", "Sim")) %>%
+  mutate(RoundRemoved.x = ifelse(TargetNode.x, NA, RoundRemoved.x ),
+         RoundRemoved.y = ifelse(TargetNode.y, NA, RoundRemoved.y ))
+
+
+HowManyNAs <- PreCorRemoved %>%
+  group_by(alpha, Sim) %>%
+  summarise(counts = sum(is.na(RoundRemoved.x*RoundRemoved.y)))
+
+HowManyNAs %>%
+  ggplot(aes(x = as.factor(alpha), y = counts)) + geom_boxplot()
+
+AllCombos <- PreCorRemoved  %>% distinct(alpha, Sim)
+
+  test <- map2_df(.x = AllCombos$Sim, .y = AllCombos$alpha, ~{
+   
+    temp <- PreCorRemoved %>%
+    filter(Sim == .x, alpha == .y, complete.cases(.))
+      cor(temp$RoundRemoved.x, temp$RoundRemoved.y, method = "kendall") %>%
+        tibble(Sim = .x, alpha = .y, cor =.)
+    
+  })
+
+  #Pre process data for plot
+ AlphavsCor <- test %>%  CleanNames(., "alpha", AlphaOrder) %>%
+  mutate( alpha = ifelse(alpha== "Infinite_Limits","Inf", alpha),
+         alpha = gsub("alpha_value_", "", alpha),
+         alpha = as.numeric(alpha)/100
+) 
+ 
+ #Make temporary plot
+ #This is used so that the blue can be added on for the linear line limits
+ TempPlot <- AlphavsCor %>%
+  ggplot(aes(x = alpha2, y = cor, fill = alpha)) + geom_boxplot()+
+  scale_fill_gradientn(colors = c("red",   "limegreen"),
+                          breaks = c(1,2,7,20,50),
+                          trans = "log",
+                          values = scales::rescale((c(0, 6, 7, 20, 50))))
+  
 ```
 
 
@@ -695,7 +802,7 @@ OriginalOrder = 1:nrow(.))
 
 
 TSNEcormat <- TSNEdf %>%
-  select(-Sim, -alpha) %>%
+  select(-Sim, -alpha, -TargetNode) %>%
   as.matrix() %>% t %>% cor(method = "spearman")
 
 dups <-duplicated(TSNEcormat) #no duplicates
@@ -741,29 +848,6 @@ key <- key#[!dups,]
 #Boxplot of corellations
 
 ```{r}
-AlphaOrder <- c("alpha value 1","alpha value 1.05","alpha value 1.1","alpha value 1.2","alpha value 1.5","alpha value 2" ,"alpha value 3","alpha value 5","alpha value 6","alpha value 7","alpha value 10","alpha value 15","alpha value 20","alpha value 50","Infinite Limits" ,"Linear Model Limits")
-
-CleanNames <- function(df, TargetColumn, AlphaOrder){
-temp <- df  %>%
-  mutate_(temp1 = TargetColumn) %>%
- mutate(temp2 = temp1,
-          temp2 = temp1 %>%
-           str_replace_all(., "_", " ") %>%
-           str_extract_all(., "([0-9])+")%>% as.numeric(.)/100,
-temp3 = temp1 %>%
-  str_replace_all(., "_", " ") %>%
-  str_extract_all(., "([aA-zZ\\s])+", T) %>%
-  paste0(., ifelse(is.na(temp2), "", temp2)),
-        temp3 = temp3 %>% as.factor() %>%
-  fct_relevel(., AlphaOrder)
-) %>%
-  select(temp3)
-temp <-temp  %>%set_names(paste0(TargetColumn,"2")) 
- 
-temp <- bind_cols(df, temp)
-return(temp)
-}
-
 
 NewOrder <- key %>%
   arrange(alpha, SimID) %>%
@@ -1344,7 +1428,6 @@ Positioning <- matrix(c(get.vertex.attribute(g3, "Lon"),
                         get.vertex.attribute(g3, "Lat")),
                       ncol = 2)
 
-
 g3 %>%
   simplify(., remove.multiple = T, remove.loops = T) %>% 
     plot(.,vertex.size=.8, edge.arrow.size=.4, vertex.label=NA, layout = Positioning)
@@ -1367,6 +1450,7 @@ proj4string(test) <- proj4string(UKLADS)
 
 ColourLegend<- tibble(RGN17NM = c(unique(Regions$RGN17NM), "Scotland", "Wales"), colours = brewer.pal(11, "Paired"))
 
+#create colours for vertices
 test2 <- over(test, UKLADS) %>%
   left_join(., Regions, by = c("lad14cd"="LAD17CD")) %>%
   mutate(RGN17NM = ifelse(grepl("W",lad14cd),"Wales", RGN17NM),
@@ -1374,23 +1458,44 @@ test2 <- over(test, UKLADS) %>%
   left_join(., ColourLegend)
 
 
-
-
+#add vertex colours to graph
 g4 <- set.vertex.attribute(g3, "Region", value = test2$RGN17NM) %>%
   set.vertex.attribute(., "color", value = test2$colours)
-
-
-
+#plot graph in geospace side by side with graph in graph space
 par(mfrow=c(1,2), mar=rep(1,4))
-
 g4 %>% 
   simplify(., remove.multiple = T, remove.loops = T) %>% 
     plot(.,vertex.size=4, vertex.label=NA, layout = Positioning)
-
-
 g4 %>% 
   simplify(., remove.multiple = T, remove.loops = T) %>% 
     plot(.,vertex.size=3, vertex.label=NA)
+
+
+#Colour graph edges
+
+#take the base graph and rename
+g5 <- g3
+
+VoltageColours <- data_frame(Voltage = c(0, 132, 275, 400), colour = brewer.pal(4, "Set1"))
+
+for (i in 1:4){
+  
+  E(g5)$color[E(g5)$Voltage == VoltageColours$Voltage[i]] <- VoltageColours$colour[i]
+  
+}
+
+
+pdf(file.path(FiguresFolder,"MapColouredEdges.pdf"))
+oldpar <- par(mfrow=c(1,2), mar=c(3,3,1,1), oma=c(0,0,3,1))  
+g5 %>% 
+  simplify(., remove.multiple = T, remove.loops = T) %>% 
+    plot(.,vertex.size=1, edge.width = 2, vertex.label=NA, layout = Positioning, edge.color = E(g5)$color)
+g5 %>% 
+  simplify(., remove.multiple = T, remove.loops = T) %>% 
+    plot(.,vertex.size=1, edge.width = 2, vertex.label=NA, edge.color = E(g5)$color)
+mtext("Line voltage in UK power grid", side=3, line=1, outer=TRUE, cex=2, font=2)
+par(oldpar)
+dev.off()
 
 ```
 
