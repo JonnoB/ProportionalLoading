@@ -631,6 +631,8 @@ Meansd <- map2_df(.x = Inputs$Var1, .y = Inputs$Var2,~{
 
 #Deletion similarity
 
+##Round Deleted
+
 Get the round number that an edge was deleted.
 
 ```{r}
@@ -670,12 +672,6 @@ AllRemovedEdges <- list.files(Deletion_Order_Folder, full.names = TRUE) %>%
   map_df(~read_rds(.x))
 
 
-```
-
-#Granularity and accuracy
-```{r}
-AlphaOrder <- c("alpha value 1","alpha value 1.05","alpha value 1.1","alpha value 1.2","alpha value 1.5","alpha value 2" ,"alpha value 3","alpha value 5","alpha value 6","alpha value 7","alpha value 10","alpha value 15","alpha value 20","alpha value 50","Infinite Limits" ,"Linear Model Limits")
-
 CleanNames <- function(df, TargetColumn, AlphaOrder){
 temp <- df  %>%
   mutate_(temp1 = TargetColumn) %>%
@@ -697,6 +693,12 @@ temp <- bind_cols(df, temp)
 return(temp)
 }
 
+```
+
+##Number of round per line-type
+```{r}
+
+#Check number of rounds
  test <- AllRemovedEdges %>%
   group_by(Sim, alpha) %>%
   summarise(rounds = max(RoundRemoved, na.rm = T)) %>%
@@ -704,7 +706,7 @@ return(temp)
 
  
  #Plot the number of rounds
-test %>%  CleanNames(., "alpha", AlphaOrder2) %>%
+test %>%  CleanNames(., "alpha", AlphaOrder) %>%
   mutate( alpha = ifelse(alpha== "Infinite_Limits","Inf", alpha),
          alpha = gsub("alpha_value_", "", alpha),
          alpha = as.numeric(alpha)/100
@@ -713,27 +715,27 @@ test %>%  CleanNames(., "alpha", AlphaOrder2) %>%
     theme(legend.position = "none", 
         axis.text.x = element_text(angle = 45, hjust = 1)) 
 
-
 test2 <- AllRemovedEdges %>%
   group_by(Sim, alpha) %>%
   mutate(decile = ntile(RoundRemoved, 10))
 
-TSNEdf <- AllRemovedEdges %>%
-  group_by(Sim, alpha) %>%
-  mutate(ntile = ntile(RoundRemoved, 20)) %>%
-  ungroup %>%
-  spread(key = Edges, value = ntile, fill = 0)
+```
 
 
+##Plot Correlation
+
+```{r}
 # testList <- file.path("/media/jonno/Seagate Expansion Drive/ProportionalLoading/Saved_Sims/Linear_Model_Limits",
 #                   "Simulation_ID_1.rds") %>% 
 #   read_rds
 
-
+#Get only the real limits
 RealPreCor  <- AllRemovedEdges %>%
   filter(alpha == "Real_Limits") %>%
   select(-alpha)
 
+#Add the real limits onto the other nodes to allow direct comparison
+#Filter out the NA values
 PreCorRemoved  <- AllRemovedEdges %>%
   filter(alpha != "Real_Limits") %>%
   left_join(., RealPreCor, by = c("Edges", "Sim")) %>%
@@ -741,15 +743,9 @@ PreCorRemoved  <- AllRemovedEdges %>%
          RoundRemoved.y = ifelse(TargetNode.y, NA, RoundRemoved.y ))
 
 
-HowManyNAs <- PreCorRemoved %>%
-  group_by(alpha, Sim) %>%
-  summarise(counts = sum(is.na(RoundRemoved.x*RoundRemoved.y)))
-
-HowManyNAs %>%
-  ggplot(aes(x = as.factor(alpha), y = counts)) + geom_boxplot()
-
 AllCombos <- PreCorRemoved  %>% distinct(alpha, Sim)
 
+#Cycle through all the combinations of alpha and sim to get the corellation for all
   test <- map2_df(.x = AllCombos$Sim, .y = AllCombos$alpha, ~{
    
     temp <- PreCorRemoved %>%
@@ -759,7 +755,10 @@ AllCombos <- PreCorRemoved  %>% distinct(alpha, Sim)
     
   })
 
-  #Pre process data for plot
+#"Infinite Limits"
+AlphaOrder <- c("alpha value 1","alpha value 1.05","alpha value 1.1","alpha value 1.2","alpha value 1.5","alpha value 2" ,"alpha value 3","alpha value 5","alpha value 6","alpha value 7","alpha value 10","alpha value 15","alpha value 20","alpha value 50","Infinite Limits" ,"Linear Model Limits")  
+
+#Pre process data for plot
  AlphavsCor <- test %>%  CleanNames(., "alpha", AlphaOrder) %>%
   mutate( alpha = ifelse(alpha== "Infinite_Limits","Inf", alpha),
          alpha = gsub("alpha_value_", "", alpha),
@@ -770,113 +769,6 @@ AllCombos <- PreCorRemoved  %>% distinct(alpha, Sim)
  #This is used so that the blue can be added on for the linear line limits
  TempPlot <- AlphavsCor %>%
   ggplot(aes(x = alpha2, y = cor, fill = alpha)) + geom_boxplot()+
-  scale_fill_gradientn(colors = c("red",   "limegreen"),
-                          breaks = c(1,2,7,20,50),
-                          trans = "log",
-                          values = scales::rescale((c(0, 6, 7, 20, 50))))
-  
-```
-
-
-#Correllation and TSNE prep
-
-The TSNE shows that the real line limits are most similar to the constant line limits in terms of what failed
-
-```{r}
-
-TSNEdf <- AllRemovedEdges %>%
-  spread(key = Edges, value = RoundRemoved, fill = 0)
-
-key <- TSNEdf %>%
-  select(Sim, alpha) %>%
-  mutate(alpha2 = case_when(
-  grepl("alpha", alpha) ~"Proportional",
-  grepl("Constant_Volt", alpha) ~"Constant Volt",
-  grepl("Constant", alpha) ~"Constant",
-  grepl("Infinite", alpha) ~"Infinite",
-  grepl("Linear_Model_Limits", alpha) ~"Linear Model Limits",
-    TRUE ~ "Real Limits"
-),
-SimID = gsub("Simulation_ID_", "", Sim) %>% as.integer,
-OriginalOrder = 1:nrow(.))
-
-
-TSNEcormat <- TSNEdf %>%
-  select(-Sim, -alpha, -TargetNode) %>%
-  as.matrix() %>% t %>% cor(method = "spearman")
-
-dups <-duplicated(TSNEcormat) #no duplicates
-
-key <- key#[!dups,] 
-  
-```
-
-#TSNE
-```{r}
-# set.seed(12358)
-# TsnecorOut1 <-TSNEcormat[!dups,] %>%  
-#   Rtsne(verbose = TRUE, eta = 1, max_iter = 5000, perplexity = 50, check_duplicates = FALSE) 
-# 
-# tsne_corplot <- data.frame(x1 = TsnecorOut1$Y[,1], 
-#                         y1 = TsnecorOut1$Y[,2]) %>%
-#   bind_cols(key) %>%
-#   mutate(alpha = sub("alpha_value_", "", alpha) %>% as.numeric()/100,
-#          alpha = ifelse(alpha2 == "Infinite", Inf, alpha))
-# 
-# tsne_corplot %>%
-#   filter(!grepl("Real", alpha), !grepl("Model", alpha)) %>%
-#     ggplot(aes(x=x1, y=y1)) + 
-#   geom_point(aes( color= alpha))+
-#    geom_point(data = filter(tsne_corplot, alpha2 == "Real Limits"), aes(fill = 'Real'), color = 'black') +
-#   geom_point(data =  filter(tsne_corplot, alpha2 == "Linear Model Limits"), aes(fill = 'Modelled'), color = 'blue') +
-#   scale_fill_manual("Line Limit", values=c(1, 1),
-#         guide=guide_legend(override.aes = list(colour=NameOrder$Colour))) +
-# AlphaGrad +
-#     ggtitle("TSNE plot of proportional loading and real line limits\n correlation similarity across all simulations")
-# ggsave(file.path(FiguresFolder, "TSNEcor.pdf"))
-# 
-# 
-# tsne_corplot %>%
-#     ggplot() + 
-#   geom_point(aes(x=x1, y=y1, color= alpha2))+ 
-#    #scale_colour_brewer(palette = "Set1")+
-#   ggtitle("TSNE plot of the Edge Round removal corellation\n between all Simulations by method")
-# ggsave(file.path(FiguresFolder, "TSNE_Method.pdf"))
-```
-
-
-#Boxplot of corellations
-
-```{r}
-
-NewOrder <- key %>%
-  arrange(alpha, SimID) %>%
-  mutate(NewOrder = 1:nrow(.))
-
-RowIDS <- NewOrder %>%
-  group_by(alpha) %>%
-  summarise(Start = first(NewOrder),
-            Last = last(NewOrder))
-
-OrderedReal <- TSNEcormat[NewOrder$OriginalOrder, NewOrder$OriginalOrder]
-OrderedReal <- OrderedReal[,NewOrder$alpha =="Real_Limits"]
-
-
-AlphavsCor <- 1:nrow(RowIDS) %>% map_df(~{
-  temp <- OrderedReal [RowIDS$Start[.x]:RowIDS$Last[.x],]
-  data_frame(alpha = RowIDS$alpha[.x], cor = diag(temp))
-}) %>%  filter(alpha != "Real_Limits") %>%
-   filter(alpha != "Constant_105", alpha != "Constant_Volt_105" ) %>% ###This is added in to make only proportional!!!!
-  CleanNames(., "alpha", AlphaOrder) %>%
-  mutate( alpha = ifelse(alpha== "Infinite_Limits","Inf", alpha),
-         alpha = gsub("alpha_value_", "", alpha),
-         alpha = as.numeric(alpha)/100
-)
-
-
-TempPlot <-AlphavsCor %>%
-    ggplot(aes(x= alpha2, y = cor, fill = alpha)) +
-  geom_boxplot() +
   scale_fill_gradientn(colors = c("red",   "limegreen"),
                           breaks = c(1,2,7,20,50),
                           trans = "log",
@@ -895,7 +787,7 @@ AlphavsCor %>%
   scale_y_continuous( breaks = seq(0,1, by= 0.1)) +
   theme(legend.position = "none", 
         axis.text.x = element_text(angle = 45, hjust = 1)) +
-  labs(x = expression(alpha*" level"), y ="Correlation with real line limits", title= "Edge removal rank correlation against real limits")
+  labs(x = expression(alpha*" level"), y ="Correlation with real line limits", title= "Node removal rank correlation against real limits")
 
 ggsave(file.path(FiguresFolder, "CorBoxPlot.pdf"))
 
@@ -905,58 +797,16 @@ AlphavsCor %>%
             median = median(cor),
             sd = sd(cor))
 
-AlphavsCor %>%
-   filter(alpha %in% c("alpha_value_100" , "alpha_value_500","Infinite_Limits", "Linear_Model_Limits" )) %>% 
-    ggplot(aes(x= as.factor(alpha), y = cor, fill = alpha)) +
-  geom_boxplot() +
-  scale_y_continuous( breaks = seq(0,1, by= 0.1)) +
-  theme(legend.position = "none", 
-        axis.text.x = element_text(angle = 45, hjust = 1)) +
-  labs(x = "alpha level", y ="Corellation with real line limits", title= "Edge removal rank corellation against real limits")
 
-```
+#Check the number of NA values
+#Na values arethe nodes that were targeted for removal. They are therefore removed from the simulation
+HowManyNAs <- PreCorRemoved %>%
+  group_by(alpha, Sim) %>%
+  summarise(counts = sum(is.na(RoundRemoved.x*RoundRemoved.y)))
 
+HowManyNAs %>%
+  ggplot(aes(x = as.factor(alpha), y = counts)) + geom_boxplot()
 
-#Make random forest classifier
-
-removed from paper
-
-```{r}
-# setwd(PLwd)
-# trainset <- createDataPartition(key$alpha2, p = .75, list = FALSE)
-# 
-# ClassDict <- data_frame(alpha2 = unique(key$alpha2)) %>%
-#   mutate(ID = 1:nrow(.))
-# 
-# key <- key %>% left_join(., ClassDict, by = "alpha2")
-# 
-# datasetTrain <- bind_cols(select(key, ID), as_tibble(TSNEcormat)) %>% as.matrix()
-# 
-# rf_ranger_default <- ranger(data = datasetTrain[trainset,],
-#                               num.trees = 500,
-#                               mtry = 500,
-#                               dependent.variable.name = "ID", 
-#                               num.threads = 7, 
-#                               classification = TRUE)
-#   
-# 
-# Out<- predict(rf_ranger_default , data = datasetTrain[-trainset,], type = "response", predict.all = F)
-# confusionMatrix(Out$predictions, datasetTrain[-trainset,1])
-# 
-# #With correct class names
-# ConfMat <- confusionMatrix(ClassDict$alpha2[match(Out$predictions, ClassDict$ID)],
-#                 ClassDict$alpha2[match(datasetTrain[-trainset,1], ClassDict$ID)]
-#                 ) 
-#
-#Yardstick version. Doesn't help much unless I have made the whole process using modelr
-# tibble(Estimate = ClassDict$alpha2[match(Out$predictions, ClassDict$ID)]%>% as.factor,
-#       Truth = ClassDict$alpha2[match(datasetTrain[-trainset,1], ClassDict$ID)] %>% as.factor
-#                 ) %>%
-# conf_mat(truth = Truth, estimate = Estimate)
-# 
-# ConfMat$table %>%
-#   xtable(.,  caption = "Confusion matrix of random forest. Columns are truth, rows are estimate", label = "tab:ConfusionForest") %>%
-#   print(type = "latex", file = file.path(FiguresFolder, "ModelPerformance.txt"))
 
 ```
 
@@ -1066,75 +916,10 @@ AccuracyAnalysisGC %>%
 
 ```
 
-#Create model predicting line-limits.
 
-```{r}
+#Strategy difference
 
-#Set seed and create model input variables
-set.seed(1)
-ModelInputVars <- g %>% as_data_frame %>%
-  mutate(absPF = abs(PowerFlow),
-         Voltage = as.factor(Voltage)) #%>%
-  select(Link.Limit, Voltage, absPF, Link, Length)
-
-#generate k=10 crossfold validated model
-models <- ModelInputVars %>%
-  filter(Link.Limit != 1e5) %>%
-  crossv_kfold(k = 10) %>%
-  mutate(model = map(train, ~ lm(Link.Limit~ Voltage +  Length, data = .)))
-
-#create predictions for each edge in the network
-predictions <- models %>%
-  unnest(map2(model, test, ~ augment(.x, newdata = .y)))
-
-#Model Performance
-metrics(predictions ,Link.Limit, .fitted)
-
-
-#Look at coefficiients
- models %>%
-  unnest(map(model, ~ tidy(.x))) %>%
-   select(.id, term, estimate) %>%
-   spread(key = term, value = estimate)
- 
-predictions %>%
-  mutate(residual = (.fitted - Link.Limit)/Link.Limit) %>% #doesn't need to be relative. absolute gives half a random cloud
-  select(Voltage, residual, absPF) %>%
-  ggplot(aes(log10(absPF), residual)) +
-  geom_point() +
-  facet_wrap(~ Voltage)
-
-
-#there is some sort of log log relationship between Y and length
-ModelInputVars %>%
-ggplot(., aes(x=Length, y = Y, colour = Voltage)) +
-  geom_point() + 
-  scale_y_log10() + scale_x_log10() +
-  labs(title = "Log 10 relatiobship between Line Length and Susceptance")
-
-models <- ModelInputVars %>%
-  mutate(logLength = log10(Length+1),
-         logY = log10(Y)) %>%
-  filter(Link.Limit != 1e5) %>%
-  crossv_kfold(k = 10) %>%
-  mutate(model = map(train, ~ lm(logY~ Voltage +  logLength, data = .)))
-
-#create predictions for each edge in the network
-Ypredictions <- models %>%
-  unnest(map2(model, test, ~ augment(.x, newdata = .y)))
-
-#Model Performance
-Ypredictions %>%
-  mutate(fitted2 = 10^.fitted) %>%
-metrics(. ,logY, .fitted)
-
-#The performance is much better than expected
-
-```
-
-#strategy difference
-
-#the entropic degree function does not load properly find out why
+See the difference between strategies
 
 ```{r}
 
@@ -1170,7 +955,7 @@ ElecCen1$NodeEC %>% arrange(-NodeEC) %>% .$Bus.Name,
 ```
 
 
-#Different strategies 1 load level
+##Different strategies 1 load level
 ```{r}
 #The vector of alpha values to be tested
 alpha_vector <- c(1.05, 1.1,1.5, 2, 5,  10, 20, 50)
@@ -1222,7 +1007,7 @@ SaveMultiAttacks(LinModLims, StratAttackVect, folder, TotalAttackRounds = Attack
 
 ```
 
-
+##Plot differences
 
 ```{r}
 
@@ -1256,8 +1041,6 @@ alpha = alpha %>%
   mutate(rankblack = min_rank(-Blackout),
          rankGC = min_rank(GCfract)) %>%
   ungroup
-
-
 
 AttackStratRoundData %>% #need to remove infinte values
   filter(alpha %in% c("alpha value 5", "Infinite Limits", "Linear Model Limits", "Real Limits")) %>%
@@ -1382,8 +1165,11 @@ test %>% select(alpha, accuracy, RMSE) %>%group_by(alpha) %>% summarise_all(funs
 ```
 
 
-#Plot geopoints
+#Geo Points
+
 ```{r}
+
+library(geosphere)
 
 points <- read_csv("/home/jonno/Downloads/point.csv")
 
@@ -1410,6 +1196,52 @@ AllPoints <- ego(g2, nodes = NApoints) %>% map_df(~{
               Lat = mean(Lat, na.rm = T))
   
 })
+```
+
+
+##Check Geopoints
+
+Some of the geopoints are not in the right location. Here I check the lat long distance with the distance provided by dataset
+
+```{r}
+
+TempPoints <- points %>%
+select(name, Lat, Lon) 
+
+CableTest <- trans2 %>%
+    mutate( Length = OHL.Length + Cable.Length ) %>%
+  select(Bus.1, Bus.2, Length) %>%
+  left_join(., TempPoints, by = c("Bus.1"= "name")) %>%
+    left_join(., TempPoints, by = c("Bus.2"= "name")) 
+
+
+test <- 1:nrow(CableTest) %>%
+  map_df(~{
+    CableTest[.x,] %>%
+      mutate(geodist = distm(as.matrix(data_frame(Lon.x, Lat.x)), 
+                         as.matrix(data_frame(Lon.y, Lat.y)))/1000) #intometers
+    
+  }) %>%
+  mutate(geodist = round(geodist, 2),
+         diff = Length - geodist,
+         absdiff = abs(diff),
+         ratio = absdiff/Length)
+
+
+postResample(test$Length, test$geodist)
+
+rm(TempPoints)
+
+table(CableTest$Length==0)
+
+
+
+```
+
+
+##Map Geo points to UK regions
+```{r}
+
 
 #Map to regions of UK
 
