@@ -7,7 +7,7 @@ editor_options:
   chunk_output_type: console
 ---
 
-
+cor(x = c(,2,4,4), y = c(1,3,2), method = "spearman")
 
 
 
@@ -270,13 +270,14 @@ SaveMultiAttacks(g, DeleteOrders, folder, TotalAttackRounds = AttackRounds, Casc
 ```
 
 
-##Infinite limits
+##Topological
+Previously called Infinite limits
 
 ```{r}
 
 setwd(Saved_Sims)
 
-folder <- "Infinite_Limits"
+folder <- "Topological"
 
   if(!file.exists(folder)){
     dir.create(folder)
@@ -295,9 +296,9 @@ Should the function should be changed so that it can handle edges as well as nod
 ```{r}
 
 #The vector of alpha values to be tested
-#alpha_vector <- c(1.05, 1.1, 1.2, 1.5, 2, 3, 5)
+alpha_vector <- c(1.05, 1.1, 1.2, 1.5, 2, 3, 5)
 setwd(Saved_Sims)
-alpha_vector <- c(35)
+#alpha_vector <- c(35)
 
 #Create the simulations for each of the alpha avalues using 100 simulations for each
 alpha_vector %>% walk(~{
@@ -551,8 +552,8 @@ SummaryofGC %>%
    filter(alpha != "Constant 105", alpha != "Constant Volt_105" )
 
  NodeCollapse2<- NodeCollapse %>%
-   filter(alpha != "Real Limits", alpha != "Linear Model_Limits") %>%
-   mutate(alpha = ifelse(alpha == "Infinite Limits", "Inf", alpha),
+   filter(alpha != "Real Limits", alpha != "Linear Model_Limits", alpha != "Topological") %>%
+   mutate(alpha = ifelse(alpha == "Topological", "Inf", alpha),
           alpha = as.numeric(alpha)/100) %>%
    arrange(alpha)
  
@@ -565,15 +566,20 @@ RealCollapse <- NodeCollapse %>%
 ModelledCollapse <- NodeCollapse %>% 
                filter(alpha == "Linear Model_Limits",is.finite(sd))#need to remove infinte values 
 
-NameOrder <- tibble(name = c("Real", "Modelled"), Colour = c("black", "blue")) %>% arrange(name)
+TopoCollapse <- NodeCollapse %>% 
+               filter(alpha == "Topological",is.finite(sd))#need to remove infinte values 
+
+
+NameOrder <- tibble(name = c("Real", "Modelled", "Topological"), Colour = c("black", "blue", "grey50")) %>% arrange(name)
 
 AlphaCollapse %>% #need to remove infinte values 
   ggplot(aes(x = PercNum, y =  mean, group = alpha)) + 
   geom_line(aes(colour = as.numeric(alpha)), show.legend = TRUE) +  
   AlphaGrad +
   geom_line(data = RealCollapse, aes(fill = 'Real'), color = 'black', linetype ="longdash") +
-  geom_line(data = ModelledCollapse, aes(fill = 'Modelled'), color = 'blue', linetype ="twodash") +
-  scale_fill_manual("Line Limit", values=c(1, 1),
+  geom_line(data = ModelledCollapse, aes(fill = 'Modelled'), color = 'blue', linetype ="longdash") +
+  geom_line(data = TopoCollapse, aes(fill = 'Topological'), color = 'grey50', linetype ="longdash") +
+  scale_fill_manual("Line Limit", values=c(1, 1, 1),
         guide=guide_legend(override.aes = list(colour=NameOrder$Colour))) +
   facet_grid(~type) +
   scale_x_continuous(labels=scales::percent) + 
@@ -592,7 +598,8 @@ AlphaCollapse %>% #need to remove infinte values
   AlphaGrad +
   geom_line(data = RealCollapse, aes(fill = 'Real'), color = 'black', linetype ="longdash") +
   geom_line(data = ModelledCollapse, aes(fill = 'Modelled'), color = 'blue', linetype ="twodash")  +
-  scale_fill_manual("Line Limit", values=c(1, 1),
+  geom_line(data = TopoCollapse, aes(fill = 'Topological'), color = 'grey50', linetype ="longdash") +
+  scale_fill_manual("Line Limit", values=c(1, 1, 1),
         guide=guide_legend(override.aes = list(colour=NameOrder$Colour))) +
   facet_grid(~type) +
   scale_x_continuous(labels=scales::percent) + 
@@ -668,8 +675,8 @@ file.path(Saved_Sims, new.type) %>%
 
 } 
   
-AllRemovedEdges <- list.files(Deletion_Order_Folder, full.names = TRUE) %>%
-  map_df(~read_rds(.x))
+AllRemovedNodes <- list.files(Deletion_Order_Folder, full.names = TRUE) %>%
+  map_df(~read_rds(.x)) %>% rename(Nodes = Names)
 
 
 CleanNames <- function(df, TargetColumn, AlphaOrder){
@@ -707,7 +714,7 @@ return(temp)
  
  #Plot the number of rounds
 test %>%  CleanNames(., "alpha", AlphaOrder) %>%
-  mutate( alpha = ifelse(alpha== "Infinite_Limits","Inf", alpha),
+  mutate( alpha = ifelse(alpha== "Topological","Inf", alpha),
          alpha = gsub("alpha_value_", "", alpha),
          alpha = as.numeric(alpha)/100
 ) %>%
@@ -723,6 +730,8 @@ test2 <- AllRemovedEdges %>%
 
 
 ##Plot Correlation
+
+This needs to be edited to account for the changed in the RoundRemoved function that differentiate between Overload/Targeted or Unknown removal types. 
 
 ```{r}
 # testList <- file.path("/media/jonno/Seagate Expansion Drive/ProportionalLoading/Saved_Sims/Linear_Model_Limits",
@@ -756,11 +765,11 @@ AllCombos <- PreCorRemoved  %>% distinct(alpha, Sim)
   })
 
 #"Infinite Limits"
-AlphaOrder <- c("alpha value 1","alpha value 1.05","alpha value 1.1","alpha value 1.2","alpha value 1.5","alpha value 2" ,"alpha value 3","alpha value 5","alpha value 6","alpha value 7","alpha value 10","alpha value 15","alpha value 20","alpha value 50","Infinite Limits" ,"Linear Model Limits")  
+AlphaOrder <- c("alpha value 1","alpha value 1.05","alpha value 1.1","alpha value 1.2","alpha value 1.5","alpha value 2" ,"alpha value 3","alpha value 5","alpha value 6","alpha value 7","alpha value 10","alpha value 15","alpha value 20","alpha value 50","Topological" ,"Linear Model Limits")  
 
 #Pre process data for plot
  AlphavsCor <- test %>%  CleanNames(., "alpha", AlphaOrder) %>%
-  mutate( alpha = ifelse(alpha== "Infinite_Limits","Inf", alpha),
+  mutate( alpha = ifelse(alpha== "Topological","Inf", alpha),
          alpha = gsub("alpha_value_", "", alpha),
          alpha = as.numeric(alpha)/100
 ) 
@@ -988,7 +997,7 @@ folder <- "Real_Limits"
 SaveMultiAttacks(g,  StratAttackVect, folder, TotalAttackRounds = AttackRounds, CascadeMode = T)
 
 setwd(StratAttackWd)
-folder <- "Infinite_Limits"
+folder <- "Topological"
 
   if(!file.exists(folder)){
     dir.create(folder)
@@ -1043,7 +1052,7 @@ alpha = alpha %>%
   ungroup
 
 AttackStratRoundData %>% #need to remove infinte values
-  filter(alpha %in% c("alpha value 5", "Infinite Limits", "Linear Model Limits", "Real Limits")) %>%
+  filter(alpha %in% c("alpha value 5", "Topological", "Linear Model Limits", "Real Limits")) %>%
   ggplot(aes(x = PercNum, y =  GCfract, colour = simulationID)) + 
   geom_line() +  
   #geom_line(data = RealCollapse, aes(fill = 'Real'), color = 'black') +
@@ -1141,6 +1150,8 @@ rm(TempPlot)
  test %>%
   group_by(alpha, alpha1) %>%
   summarise(Accuracy = first(AlphaRMSE)) %>% #AlphaAccuracy
+   ungroup %>%
+   mutate(alpha = factor(alpha, levels = AlphaOrder)) %>%
   ggplot(aes(x= alpha, y = Accuracy)) +
   geom_col() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))+
@@ -1167,33 +1178,86 @@ test %>% select(alpha, accuracy, RMSE) %>%group_by(alpha) %>% summarise_all(funs
 
 #Geo Points
 
+function to help check the geo points
+```{r}
+calcgeodist <- function(points, trans2){
+  #calculates the distance between all nodes in the network. produces distance for both the cable length from the data and the geodistance using the coordinates. After using this function the error can be found.
+  #The columns used are Lat and Lon
+#select variables
+TempPoints <- points %>%
+select(name, Lat, Lon) 
+
+#Add on cable length
+CableTest <- trans2 %>%
+    mutate( Length = OHL.Length + Cable.Length ) %>%
+  select(Bus.1, Bus.2, Length) %>%
+  left_join(., TempPoints, by = c("Bus.1"= "name")) %>%
+    left_join(., TempPoints, by = c("Bus.2"= "name")) 
+
+#Find distance based on coordinates
+test <- 1:nrow(CableTest) %>%
+  map_df(~{
+    CableTest[.x,] %>%
+      mutate(geodist = distm(as.matrix(data_frame(Lon.x, Lat.x)), 
+                         as.matrix(data_frame(Lon.y, Lat.y)))/1000) #convert to meters
+    
+  }) %>%
+  mutate(geodist = round(geodist, 2),
+         diff = Length - geodist,
+         absdiff = abs(diff),
+         ratio = absdiff/Length)
+}
+```
+
+##Load data
+
 ```{r}
 
 library(geosphere)
 
-points <- read_csv("/home/jonno/Downloads/point.csv")
+points <- read_csv(file.path(basewd, "point.csv"))
+  
+coords2 <-  str_split_fixed(string = points$Lat.2, pattern = ",", n = 2)
+
+points <- points %>%
+  mutate(Lat.2 = coords2[,1] %>% as.numeric,
+         Lon.2 = coords2[,2] %>% as.numeric)
 
 points <- get.vertex.attribute(gbase, "name") %>% tibble(name = .) %>%
   left_join(., points, by = c("name" = "Edges")) %>%
   group_by(name) %>%
   mutate(counts = n()) %>%
   ungroup %>%
-  slice(-219) %>%
-  mutate(Lat = ifelse(name == "TILB40" ,51.46006, Lat))
+  group_by(name) %>%
+  mutate(count = n()) %>%
+  ungroup
 
+```
+
+```{r}
+#Find all points with no coords
 NApoints <-points %>%
   filter(is.na(Lon)) %>%
   pull(name)
 
-g2 <- set.vertex.attribute(gbase, "Lat", value = points$Lat) %>%
-  set.vertex.attribute(., "Lon",value =  points$Lon)
+#add coords to graph
 
-AllPoints <- ego(g2, nodes = NApoints) %>% map_df(~{
+pointsTemp <- points %>%
+    filter(!grepl("Derby_South_132kV", SubstationName)) %>% #The node is definately not Derby south
+  mutate(Lat = ifelse(!is.na(Lat.2), Lat.2, Lat),
+         Lon = ifelse(!is.na(Lon.2), Lon.2, Lon))
+
+g2 <- set.vertex.attribute(gbase, "Lat", value = pointsTemp$Lat) %>%
+  set.vertex.attribute(., "Lon",value =  pointsTemp$Lon)
+
+#find the average coordinates of the nodes with no coordinates based on thier ego networks
+AllPoints <- NApoints  %>% map_df(~{
   
- points %>%
-    filter(name %in% names(.x)) %>%
+ points %>% 
+    filter(name %in% names(ego(g2, nodes = .x)[[1]])) %>%
     summarise(Lon = mean(Lon, na.rm = T),
-              Lat = mean(Lat, na.rm = T))
+              Lat = mean(Lat, na.rm = T),
+              count = nrow(.), name = .x)
   
 })
 ```
@@ -1204,38 +1268,112 @@ AllPoints <- ego(g2, nodes = NApoints) %>% map_df(~{
 Some of the geopoints are not in the right location. Here I check the lat long distance with the distance provided by dataset
 
 ```{r}
+JieCoords <- calcgeodist(points, trans2)
+JieCoords2 <- points %>%
+    mutate(Lat = ifelse(name=="TILB40", Lat-10,Lat)) %>%
+  calcgeodist(., trans2)
 
-TempPoints <- points %>%
-select(name, Lat, Lon) 
-
-CableTest <- trans2 %>%
-    mutate( Length = OHL.Length + Cable.Length ) %>%
-  select(Bus.1, Bus.2, Length) %>%
-  left_join(., TempPoints, by = c("Bus.1"= "name")) %>%
-    left_join(., TempPoints, by = c("Bus.2"= "name")) 
+JonnoCoords <- points %>%
+  filter(SubstationName!="Derby_South_132kV") %>% #The node is definately not Derby south
+  mutate(Lat = ifelse(!is.na(Lat.2), Lat.2, Lat),
+         Lon = ifelse(!is.na(Lon.2), Lon.2, Lon)) %>%
+  calcgeodist(., trans2)
 
 
-test <- 1:nrow(CableTest) %>%
+#calculate error
+
+list(x= JieCoords, y = JieCoords2, z = JonnoCoords) %>%
   map_df(~{
-    CableTest[.x,] %>%
-      mutate(geodist = distm(as.matrix(data_frame(Lon.x, Lat.x)), 
-                         as.matrix(data_frame(Lon.y, Lat.y)))/1000) #intometers
+    .x %>%
+  filter(complete.cases(.)) %>%
+with(., postResample(Length, geodist)) %>% 
+      tibble(value = ., type = names(.))%>%
+      spread(key = type, value = value)
+  }) %>% mutate(type = c("JieCoords", "JieCoords2", "JonnoCoords"))
+
+
+test <- unique(c(JonnoCoords$Bus.1, JonnoCoords$Bus.2)) %>% #substring(., 1,4) %>%
+  map_df(~{
     
-  }) %>%
-  mutate(geodist = round(geodist, 2),
-         diff = Length - geodist,
-         absdiff = abs(diff),
-         ratio = absdiff/Length)
+    JonnoCoords %>% mutate(temp = paste(.$Bus.1, .$Bus.2)) %>%
+      #filter(Bus.1 == .x |Bus.2==.x) %>%
+      filter(grepl(pattern = .x, x = temp )) %>%
+      summarise(Error = sum(absdiff, na.rm = T),
+                count = n()) %>%
+      mutate(Bus = .x)
+    
+  })
 
 
-postResample(test$Length, test$geodist)
+ErrorWales <- test %>%
+  filter(Bus %in% testRegion$name)
 
-rm(TempPoints)
+test2 <- test %>%
+  mutate(Bus = substring(Bus, 1,4)) %>%
+  group_by(Bus) %>%
+  summarise_all(sum) %>%
+  arrange(-Error)
 
-table(CableTest$Length==0)
 
+```
 
+##Minimise error
 
+Some points are very hard to place having no clear location. This next section allows the points to be placed after searching across a grid to minimise the error with neighbouring vertices.
+
+```{r}
+target = "HUNE40"
+JonnoCoords %>%
+filter( grepl(target, Bus.1) |grepl(target, Bus.2))
+
+testg <- make_ego_graph(g2, nodes = target)[[1]]
+
+NodeNames <- vertex_attr(testg, "name")
+Lat <-vertex_attr(testg, "Lat") %>% .[!is.na(.)]
+Lon <- vertex_attr(testg, "Lon")  %>% .[!is.na(.)]
+
+#mak a grid of coordinates based on the neighbouring positions
+testCoords <- expand.grid(Lon = seq(min(Lon), max(Lon), length.out = 100),
+               Lat = seq(min(Lat), max(Lat), length.out = 100))
+point2 <- points %>%
+  filter(name %in% NodeNames) 
+
+#subset the trans2 data to make it faster to geolocate
+trans3 <- trans2 %>%
+filter( grepl(target, Bus.1) | grepl(target, Bus.2))
+
+#find the error for each coordinate in the grid.
+AllError <- 1:nrow(testCoords) %>%
+  map_df(~{
+    print(.x)
+    Out <- point2 %>%
+    mutate(Lon.2 = ifelse(name==target, testCoords$Lon[.x] , Lat.2),
+           Lat.2 = ifelse(name==target, testCoords$Lat[.x] , Lat.2)) %>%
+  mutate(Lat = ifelse(!is.na(Lat.2), Lat.2, Lat),
+         Lon = ifelse(!is.na(Lon.2), Lon.2, Lon)) %>%
+  calcgeodist(., trans3) %>%
+  filter(complete.cases(.)) %>%
+with(., postResample(Length, geodist)) %>% 
+      tibble(value = ., type = names(.))%>%
+      spread(key = type, value = value) %>%
+  mutate(Lat = testCoords$Lat[.x],
+         Lon = testCoords$Lon[.x] )
+    
+    return(Out)
+    
+  })
+
+#plot the results
+  AllError %>%
+    ggplot(aes(x = Lon, y = Lat, fill = RMSE)) + geom_tile()
+  
+    AllError %>%
+    ggplot(aes(x = Lon, y = Lat, fill = Rsquared)) + geom_tile()
+
+      AllError %>%
+    ggplot(aes(x = Lon, y = Lat, fill = MAE)) + geom_tile()
+    
+#A better way to do this would be to get the x and y error then sum across all connected node to get the total error components. then move the node that distance on x and y. This makes the force of all the connecting nodes 0 and is the minimum error point.
 ```
 
 
@@ -1280,7 +1418,7 @@ test <- spTransform(test, proj4string(UKLADS))
 # Set the projection of the SpatialPointsDataFrame using the projection of the shapefile
 proj4string(test) <- proj4string(UKLADS)
 
-ColourLegend<- tibble(RGN17NM = c(unique(Regions$RGN17NM), "Scotland", "Wales"), colours = brewer.pal(11, "Paired"))
+ColourLegend <- tibble(RGN17NM = c(unique(Regions$RGN17NM), "Scotland", "Wales"), colours = brewer.pal(11, "Paired"))
 
 #create colours for vertices
 test2 <- over(test, UKLADS) %>%
@@ -1346,3 +1484,31 @@ library(PowerGridNetworking)
 
 ```
 
+
+#Single attack exmaple
+
+This chunk is just used so that I can have a test bed for function where I need to re-simulate an attack
+
+```{r} 
+#create graph
+testg <- Proportional_Load(g, 1.5)
+
+#get single deletion order
+DeletionOrder <- DeleteOrders[1,-1] %>% t %>% .[,1]
+
+ FixedNodes <- quo(FixedStrategyAttack(g, DeletionOrder))
+    #suppres attack the grid messages
+    AttackSeries <-AttackTheGrid(list(list(testg)),
+                                                   FixedNodes,
+                                                   referenceGrid = NULL,
+                                                   MinMaxComp = 0,
+                                                   TotalAttackRounds = 1000,
+                                                   CascadeMode = TRUE)
+
+  #try with much lower alpha
+  AttackSeries <- read_rds(file.path("/media/jonno/Seagate Expansion Drive/ProportionalLoading/Saved_Sims/alpha_value_105", "Simulation_ID_1.rds"))
+
+  test <- RoundTypeRemoved(AttackSeries)
+  test1 <- test[[2]]
+
+```
