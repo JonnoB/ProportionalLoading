@@ -281,33 +281,6 @@ folder <- "Test2" #"Topological"
 
 SaveMultiAttacks(g, DeleteOrders, folder, TotalAttackRounds = AttackRounds, CascadeMode = F)
 
-
-library(foreach)
-library(doMC)
-
-setwd("/home/jonno")
-
-folder <- "Test"
-
-  if(!file.exists(folder)){
-    dir.create(folder)
-  }
-
-
-n <- 7
-
-groups <- split(1:nrow(DeleteOrders), sort(rep_len(1:n, length(1:nrow(DeleteOrders)))))
-
-registerDoMC(4)
-foreach (i = 1:n) %dopar% {
-
- SaveMultiAttacks(g, DeleteOrders[groups[[i]],], folder, TotalAttackRounds = AttackRounds, CascadeMode = F)
-  
-}
-
-
-
-
 ```
 
 
@@ -413,57 +386,6 @@ SaveMultiAttacks(LinModLims, DeleteOrders, folder, TotalAttackRounds = AttackRou
 ```
 
 
-
-##Constant limits
-
-takes the line with most power flow, adds x percent and uses that as the power limit for all line
-
-```{r}
-setwd(Saved_Sims)
-#Needs to be redone as *1.05
-folder <- "Constant_105"
-
-LineLim<- max(get.edge.attribute(g, "PowerFlow"))*105
-
-ConstantLims <- set.edge.attribute(g, "Link.Limit", value = LineLim)
-
-  if(!file.exists(folder)){
-    dir.create(folder)
-  }
-
-SaveMultiAttacks(ConstantLims, DeleteOrders, folder, TotalAttackRounds = AttackRounds, CascadeMode = T)
-
-```
-
-
-##Constant voltage limits
-
-```{r}
-setwd(Saved_Sims)
-
-folder <- "Constant_Volt_105"
-
-
-Const_Volt <- EdgeAttr %>%
-    group_by(Voltage) %>%
-  mutate(constant = max(PowerFlow)*1.05) %>%
-    ungroup %>%
-  select(constant)
-
-LineLim<- Const_Volt$constant
-
-ConstantLims <- set.edge.attribute(g, "Link.Limit", value = LineLim)
-
-  if(!file.exists(folder)){
-    dir.create(folder)
-  }
-
-SaveMultiAttacks(ConstantLims, DeleteOrders, folder, TotalAttackRounds = AttackRounds, CascadeMode = T)
-
-```
-
-
-
 ##Extend the experiment
 This is used to extend the original experiment from 150 node removals to complete collapse.
 The whole experiment has been updated so this code chunk is no longer useful.
@@ -510,32 +432,6 @@ AttackRoundData <- list.files(path = file.path(PLwd,"SummaryData"),
 Plots simple graphs from summary data
 
 ```{r}
-
-SummariseMultiAttack<- function(df){
- df %>% 
-    mutate(PGfract = (max(PowerGen)- PowerGen)/max(PowerGen)) %>%
-    group_by(NodesAttacked, alpha) %>%
-    summarise(mean = mean(GCfract),
-              sd = sd(GCfract),
-              GC95 = quantile(GCfract, .95),
-              GC05 = quantile(GCfract, .05),
-              count = n(),
-              mPGfract = mean(PGfract),
-              sdPGfract = sd(PGfract),
-              medPGfract = median(PGfract),
-              PG95 = quantile(PGfract, .95),
-              PG05 = quantile(PGfract, .05),
-              PGmax = max(PGfract),
-              PGmin = min(PGfract),
-              mLoad = mean(GridLoading, na.rm = T),
-              GL95 = quantile(GridLoading, .95, na.rm = T),
-              GL05 = quantile(GridLoading, .05, na.rm = T)) %>%
-    ungroup %>%
-    group_by(alpha) %>%
-     mutate(ID =n():1) %>%
-    ungroup
-  
-}
 
 SummaryofGC<- AttackRoundData %>%
   SummariseMultiAttack%>%
@@ -1500,7 +1396,6 @@ with(., postResample(Length, geodist)) %>%
 ##Map Geo points to UK regions
 
 ```{r}
-#Map to regions of UK
 
 ShapeFolder <- "/home/jonno/Dropbox/SSE/Empty Homes/ShapeFiles/Local_Authority_Districts_December_2014_Ultra_Generalised_Clipped_Boundaries_in_Great_Britain"
 
@@ -1508,7 +1403,6 @@ library(sf)
 library(rgdal)
 library(RColorBrewer)
 UKLADS <- readOGR(file.path(ShapeFolder, "Local_Authority_Districts_December_2014_Ultra_Generalised_Clipped_Boundaries_in_Great_Britain.shp"))
-Regions <- read_csv(file.path("/home/jonno/Dropbox/MScThesis", "Local_Authority_District_to_Region_December_2017_Lookup_in_England_.csv"))
   
 g3 <- set.vertex.attribute(g2, "Lat", index = NApoints, value = AllPoints$Lat) %>%
   set.vertex.attribute(., "Lon",index = NApoints, value = AllPoints$Lon)
@@ -1522,49 +1416,97 @@ Positioning <- matrix(c(get.vertex.attribute(g3, "Lon"),
 ###GGplot map
 
 ```{r}
-#create dataframe of graph
-test <- g3 %>%
-   # simplify(., remove.multiple = T, remove.loops = T) %>%
+
+GeoAndForceCoords <- function(g, NodePos, seed= 2346){
+  #This function takes the graph and a data frame of three columns Node (name of the nodes) and Longitude and Latitude.
+  #The function outputs a dataframe that allows the plotting of of a nodes by geography or fruchtman and reingold expansion
+  
+  test <- g %>%
   as_data_frame(.) %>%
   select(from, to, Link, Voltage) %>%
 gather(key = "type", value = "Node", -Voltage,-Link) %>%
-  left_join(Positioning %>% as_tibble() %>%
-  mutate(Node = get.vertex.attribute(g3, "name")))
-
-set.seed(2346)
-  BaseCoords <- layout_nicely(g3) %>% 
+  left_join(NodePos)
+  
+  set.seed(seed)
+  BaseCoords <- layout_nicely(g) %>% 
     as_tibble %>% 
-    mutate(Node = names(V(g)))
+    mutate(Node = names(V(g))) %>%
+  rename(Latitude = V1,
+         Longitude = V2)
 
     CoordLimstest <-test %>%
-    select(V1:V2) %>%
+    select(Latitude:Longitude) %>%
     summarise_all(funs(min, max, mean, sd))
     
   CoordLims <-BaseCoords %>%
-    select(V1:V2) %>%
+        select(Latitude:Longitude) %>%
     summarise_all(funs(min, max, mean, sd))
 
   BaseCoords <- BaseCoords %>%
-    mutate(V1 = (V1-CoordLims$V1_min)/(CoordLims$V1_max-CoordLims$V1_min),
-           V2 =  (V2-CoordLims$V2_min)/(CoordLims$V2_max-CoordLims$V2_min),
-           V1 = V1*(CoordLimstest$V1_max-CoordLimstest$V1_min)+CoordLimstest$V1_min,
-           V2 = V2*(CoordLimstest$V2_max-CoordLimstest$V2_min)+CoordLimstest$V2_min)
+    mutate(Latitude = (Latitude-CoordLims$Latitude_min)/(CoordLims$Latitude_max-CoordLims$Latitude_min),
+           Longitude =  (Longitude-CoordLims$Longitude_min)/(CoordLims$Longitude_max-CoordLims$Longitude_min),
+           Latitude = Latitude*(CoordLimstest$Latitude_max-CoordLimstest$Latitude_min)+CoordLimstest$Latitude_min,
+           Longitude = Longitude*(CoordLimstest$Longitude_max-CoordLimstest$Longitude_min)+CoordLimstest$Longitude_min)
 
   
 test2 <- test %>%
-  select(-V1, -V2) %>%
+  select(-Latitude, -Longitude) %>%
 left_join(BaseCoords, by = "Node") %>%
   mutate(PositionType = "Fruchterman & Reingold ") %>%
   bind_rows(., test %>% mutate(PositionType = "Geo Space"))
-    
-#plot graph as ggplot
-test2 %>%
+
+return(test2)
+  
+}
+
+
+test <- Positioning %>% as_tibble()%>%
+  rename(Latitude = V1,
+         Longitude = V2)  %>%
+  mutate(Node = get.vertex.attribute(g3, "name"),
+         Degree = degree(g3),
+         BalencedPower = get.vertex.attribute(g3, "BalencedPower"),
+         NodeType = case_when(
+           BalencedPower<0 ~"Demand",
+           BalencedPower==0~"Transfer",
+           TRUE ~"Generation"
+         )) %>% GeoAndForceCoords(g3, .) 
+
+#This suggests that end transfers occur near the center of the network
+test %>%
   mutate(Voltage = factor(Voltage),
          PositionType = factor(PositionType),
          PositionType = fct_relevel(PositionType, "Geo Space", after = 0)) %>%
-  ggplot(aes(x = V1, y = V2)) + 
+  ggplot(aes(x = Latitude, y = Longitude)) + 
+  geom_line(aes( group = Link)) +
+  facet_grid(~PositionType) +
+  geom_point(data = . %>% filter(Degree ==1), aes(colour = NodeType)) +
+    theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.y=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks.y=element_blank())
+
+
+```
+
+
+```{r}
+GGmapData <- Positioning %>% as_tibble()%>%
+  rename(Latitude = V1,
+         Longitude = V2)  %>%
+  mutate(Node = get.vertex.attribute(g3, "name")) %>%
+  GeoAndForceCoords(g3,.)
+
+#plot graph as ggplot
+GGmapData %>%
+  mutate(Voltage = factor(Voltage),
+         PositionType = factor(PositionType),
+         PositionType = fct_relevel(PositionType, "Geo Space", after = 0)) %>%
+  ggplot(aes(x = Latitude, y = Longitude)) + 
   geom_line(aes(colour = Voltage, group = Link)) +
-  facet_grid(~PositionType, scales = "free") +
+  facet_grid(~PositionType) +
   theme(axis.title.x=element_blank(),
         axis.text.x=element_blank(),
         axis.ticks.x=element_blank(),
