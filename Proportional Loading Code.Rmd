@@ -44,7 +44,6 @@ LatexFolder <- "/home/jonno/Dropbox/Apps/ShareLaTeX/Proportional Line Limits"
 FiguresFolder <- file.path(LatexFolder, "Figures")
 TablesFolder <- file.path(LatexFolder, "Tables")
 MatricesFolder <- file.path(LatexFolder, "Matrices")
-Functions <-"/home/jonno/Create_ETYS_network/Functions"
 Tariff <- file.path(basewd,"Tariff and Transport")
 PLwd <- "/media/jonno/Seagate Expansion Drive/ProportionalLoading"
 Saved_Sims <- file.path(PLwd, "Saved_Sims")
@@ -1517,75 +1516,6 @@ g3 <- set.vertex.attribute(g2, "Lat", index = NApoints, value = AllPoints$Lat) %
 Positioning <- matrix(c(get.vertex.attribute(g3, "Lon"),
                         get.vertex.attribute(g3, "Lat")),
                       ncol = 2)
-```
-
-
-###Base Map
-```{r}
-test <- Positioning %>% as.tibble %>%
-  rename(Longitude = V1, Latitude = V2)
-
-# Assignment modified according
-coordinates(test) <- ~ Longitude + Latitude
-
-#After you create your list of latlongs you must set the proj4string to longlat
-proj4string(test) <- CRS("+proj=longlat")
-
-#Before you re-set the proj4string to the one from sodo you must actually convert #your coordinates to the new projection
-test <- spTransform(test, proj4string(UKLADS))
-
-# Set the projection of the SpatialPointsDataFrame using the projection of the shapefile
-proj4string(test) <- proj4string(UKLADS)
-
-ColourLegend <- tibble(RGN17NM = c(unique(Regions$RGN17NM), "Scotland", "Wales"), colours = brewer.pal(11, "Paired"))
-
-#create colours for vertices
-test2 <- over(test, UKLADS) %>%
-  left_join(., Regions, by = c("lad14cd"="LAD17CD")) %>%
-  mutate(RGN17NM = ifelse(grepl("W",lad14cd),"Wales", RGN17NM),
-         RGN17NM = ifelse(grepl("S",lad14cd),"Scotland", RGN17NM)) %>%
-  left_join(., ColourLegend)
-
-
-#add vertex colours to graph
-g4 <- set.vertex.attribute(g3, "Region", value = test2$RGN17NM) %>%
-  set.vertex.attribute(., "color", value = test2$colours)
-#plot graph in geospace side by side with graph in graph space
-par(mfrow=c(1,2), mar=rep(1,4))
-g4 %>% 
-  simplify(., remove.multiple = T, remove.loops = T) %>% 
-    plot(.,vertex.size=4, vertex.label=NA, layout = Positioning)
-g4 %>% 
-  simplify(., remove.multiple = T, remove.loops = T) %>% 
-    plot(.,vertex.size=3, vertex.label=NA)
-
-
-#Colour graph edges
-
-#take the base graph and rename
-g5 <- g3
-
-VoltageColours <- data_frame(Voltage = c(0, 132, 275, 400), colour = brewer.pal(4, "Set1"))
-
-for (i in 1:4){
-  
-  E(g5)$color[E(g5)$Voltage == VoltageColours$Voltage[i]] <- VoltageColours$colour[i]
-  
-}
-
-
-pdf(file.path(FiguresFolder,"MapColouredEdges.pdf"))
-oldpar <- par(mfrow=c(1,2), mar=c(3,3,1,1), oma=c(0,0,3,1))  
-g5 %>% 
-  simplify(., remove.multiple = T, remove.loops = T) %>% 
-    plot(.,vertex.size=1, edge.width = 2, vertex.label=NA, layout = Positioning, edge.color = E(g5)$color)
-g5 %>% 
-  simplify(., remove.multiple = T, remove.loops = T) %>% 
-    plot(.,vertex.size=1, edge.width = 2, vertex.label=NA, edge.color = E(g5)$color)
-mtext("Line voltage in UK power grid", side=3, line=1, outer=TRUE, cex=2, font=2)
-par(oldpar)
-dev.off()
-
 ```
 
 
