@@ -7,10 +7,6 @@ editor_options:
   chunk_output_type: console
 ---
 
-cor(x = c(,2,4,4), y = c(1,3,2), method = "spearman")
-
-
-
 This script is for the PhD chapter/paper on proportional grid loading.
 
 The goal of this paper is to compare real and proportional line limits and see what affect this has on cascading failures in the power-grid during attack.
@@ -26,7 +22,7 @@ LoadData2 says that all with voltage 0 are transformers. This implies they canno
 
 ```{r}
 
-packages <- c("tidyverse", "igraph","readr","readxl", "broom", "zoo", "stringr","foreach", "doMC",  "xtable", "geomnet", "ggnetwork", "rlang", "animation", "ggridges", "poweRlaw", "Rtsne", "caret", "ranger", "xtable", "broom", "modelr", "yardstick")
+packages <- c("tidyverse", "igraph","readr","readxl", "broom", "zoo", "stringr","foreach", "doMC",  "xtable", "geomnet", "ggnetwork", "rlang", "animation", "ggridges", "poweRlaw", "Rtsne", "caret", "ranger", "xtable", "broom", "modelr", "yardstick", "sf", "rgdal", "foreach", "doMC")
 
 new.packages <- packages[!(packages %in% installed.packages()[,"Package"])]
 if(length(new.packages)) install.packages(new.packages)
@@ -202,6 +198,7 @@ rm(TempPlot)
 
 #Uses only Alpha which is much easier for people to understand
  edges %>%
+  # filter(alpha>1)%>%
    filter(is.finite(alpha), Link.Limit!= 100000) %>%
    ggplot(aes(x = LoadLevel)) + 
    geom_histogram(bins = 10, aes(y = (..count..)/sum(..count..)))+ #remove the fill to make it black again , fill = rev(AccBarCol[-c(1:2)])
@@ -277,13 +274,40 @@ Previously called Infinite limits
 
 setwd(Saved_Sims)
 
-folder <- "Topological"
+folder <- "Test2" #"Topological"
 
   if(!file.exists(folder)){
     dir.create(folder)
   }
 
 SaveMultiAttacks(g, DeleteOrders, folder, TotalAttackRounds = AttackRounds, CascadeMode = F)
+
+
+library(foreach)
+library(doMC)
+
+setwd("/home/jonno")
+
+folder <- "Test"
+
+  if(!file.exists(folder)){
+    dir.create(folder)
+  }
+
+
+n <- 7
+
+groups <- split(1:nrow(DeleteOrders), sort(rep_len(1:n, length(1:nrow(DeleteOrders)))))
+
+registerDoMC(4)
+foreach (i = 1:n) %dopar% {
+
+ SaveMultiAttacks(g, DeleteOrders[groups[[i]],], folder, TotalAttackRounds = AttackRounds, CascadeMode = F)
+  
+}
+
+
+
 
 ```
 
@@ -488,7 +512,7 @@ Plots simple graphs from summary data
 
 ```{r}
 
-SummariseMonteCarlo <- function(df){
+SummariseMultiAttack<- function(df){
  df %>% 
     mutate(PGfract = (max(PowerGen)- PowerGen)/max(PowerGen)) %>%
     group_by(NodesAttacked, alpha) %>%
@@ -515,7 +539,7 @@ SummariseMonteCarlo <- function(df){
 }
 
 SummaryofGC<- AttackRoundData %>%
-  SummariseMonteCarlo %>%
+  SummariseMultiAttack%>%
   mutate(PercNum = NodesAttacked/958,
          alpha = sub("alpha_value_", "", alpha) %>% sub("_", " ", .))
 
@@ -647,7 +671,6 @@ Get the round number that an edge was deleted.
 FolderVect <- list.files(path = Saved_Sims) #folder where all the alpha FOLDERS are
 FileVect <- list.files(path = Deletion_Order_Folder) %>% gsub(".rds", "",.) #folder where all the deletion order FILES are
 new.type <- FolderVect[!(FolderVect %in% FileVect)] #The FOLDERS that are not present as FILES
-TargetType <- "Node" #Either Node or Edge depending on which deletion order is being used
 
 if(length(new.type)>0){
 file.path(Saved_Sims, new.type) %>%
@@ -659,7 +682,7 @@ file.path(Saved_Sims, new.type) %>%
         file <- .x
         print(file)
         read_rds(file) %>%
-          RoundRemoved(type = TargetType)  %>%
+          RoundTypeRemoved (.)  %>%
           mutate(Sim = gsub(".rds", "",file) %>% basename)
       }
     ) %>%
@@ -676,7 +699,7 @@ file.path(Saved_Sims, new.type) %>%
 } 
   
 AllRemovedNodes <- list.files(Deletion_Order_Folder, full.names = TRUE) %>%
-  map_df(~read_rds(.x)) %>% rename(Nodes = Names)
+  map_df(~read_rds(.x))
 
 
 CleanNames <- function(df, TargetColumn, AlphaOrder){
@@ -706,14 +729,16 @@ return(temp)
 ```{r}
 
 #Check number of rounds
- test <- AllRemovedEdges %>%
-  group_by(Sim, alpha) %>%
-  summarise(rounds = max(RoundRemoved, na.rm = T)) %>%
-   ungroup
+ NumberofRounds <- AllRemovedNodes %>%
+  group_by(Sim, alpha, type) %>%
+  summarise(counts = max(RoundRemoved, na.rm = T)) %>%
+   ungroup %>% mutate( RemovalType = "Rounds")
 
  
  #Plot the number of rounds
-test %>%  CleanNames(., "alpha", AlphaOrder) %>%
+NumberofRounds %>%
+  filter(type== "Node") %>%
+  CleanNames(., "alpha", AlphaOrder) %>%
   mutate( alpha = ifelse(alpha== "Topological","Inf", alpha),
          alpha = gsub("alpha_value_", "", alpha),
          alpha = as.numeric(alpha)/100
@@ -726,6 +751,103 @@ test2 <- AllRemovedEdges %>%
   group_by(Sim, alpha) %>%
   mutate(decile = ntile(RoundRemoved, 10))
 
+test <- AllRemovedNodes %>%
+  group_by(type, alpha, Sim, RemovalType) %>%
+  summarise(counts = n()) %>%
+  spread(key = RemovalType, value = counts) %>%
+  ungroup
+  
+test %>%
+  filter(alpha !="Topological") %>%
+  select(Islanded:Targeted) %>%
+  cor
+
+ AllRemovedNodes %>%
+  group_by(type, alpha, Sim, RemovalType) %>%
+  summarise(counts = n()) %>%
+ #bind_rows(., NumberofRounds) %>%
+     filter(type == "Node") %>%
+   ggplot(aes(x = alpha, y = counts)) + geom_boxplot() + facet_wrap(type~RemovalType)+
+    theme(legend.position = "none", 
+        axis.text.x = element_text(angle = 45, hjust = 1)) 
+
+ 
+  AllRemovedNodes %>%
+  group_by(type, alpha, Sim, RemovalType) %>%
+  summarise(counts = n()) %>%
+    filter(type == "Node", RemovalType !="Islanded") %>%
+     spread(key = RemovalType, value = counts) %>%
+    rename(Rounds = Targeted) %>%
+ggplot(aes(x = Overloaded, y = Rounds, colour = alpha))  + geom_point() +
+    ggtitle("Number of Rounds vs number of overloaded nodes")
+ 
+```
+
+##Islanding per round
+```{r}
+ LossFractionByRound <- AllRemovedNodes %>%
+  group_by(Sim, alpha, type, RoundRemoved, RemovalType) %>%
+  summarise(counts = n()) %>%
+  group_by(Sim, alpha, type, RemovalType) %>%
+  mutate(cumsum = cumsum(counts)) %>%
+  group_by(alpha, type, RoundRemoved, RemovalType) %>%
+  summarise(mean = mean(counts),
+            median = median(counts),
+            sd = sd(counts),
+            cummean = mean(cumsum),
+            cummedian = median(cumsum),
+            cumsd = sd(cumsum)) %>%
+  left_join(tibble(type = c("Edge", "Node"), 
+                    tot = c(ecount(gbase), vcount(gbase)))
+            ) %>%
+  group_by(alpha, type, RemovalType) %>%
+  mutate( test = cumsum(median),
+          testfrac = test/tot,
+    cummeanfrac = cummean/tot,
+            cummedianfrac = cummedian/tot)
+
+
+
+  
+LossFractionByRound %>%
+  filter(type == "Node", RemovalType != "Targeted") %>%
+  ggplot(aes(x = RoundRemoved, y = cummean, group = alpha, colour = alpha)) + geom_line() + 
+  facet_wrap(~RemovalType)
+  
+
+
+Loss2 <- AllRemovedNodes %>%
+  group_by(Sim, alpha, type, RoundRemoved, RemovalType) %>%
+  summarise(counts = n()) %>%
+  group_by(Sim, alpha, type, RemovalType) %>%
+  mutate(cumsum = cumsum(counts)) 
+
+
+Loss2 %>%
+  filter(type == "Node", alpha == "alpha_value_300", RemovalType != "Targeted") %>%
+  ggplot(aes(x = RoundRemoved, y = cumsum, group = Sim, colour = alpha)) + geom_line() + 
+  facet_wrap(.~RemovalType, scales = "free_y")
+
+
+Loss3 <- Loss2 %>%
+  group_by(Sim, type, alpha, RemovalType) %>%
+  summarise(cumsum = max(cumsum)) %>%
+  spread(key = RemovalType, value = cumsum)
+
+#Strong negative corellation with between Targeted and overload for edge removal, but also for Islanded... What?
+Loss3 %>%
+  filter(type == "Node", alpha == "Real_Limits") %>%
+  ggplot(aes(x = Islanded, y = Overloaded)) +
+  geom_point()
+
+   Loss3 %>%
+ # filter(type == "Node", alpha == "Real_Limits") %>%
+     group_by(alpha, type) %>%
+     summarise(corTargOver = cor(Targeted, Overloaded, use =  "pairwise.complete.obs"),
+               corTargIsl = cor(Targeted, Islanded, use =  "pairwise.complete.obs"),
+               corOverIsl = cor(Overloaded, Islanded, use =  "pairwise.complete.obs")) %>%
+     arrange(type)
+  
 ```
 
 
@@ -818,7 +940,6 @@ HowManyNAs %>%
 
 
 ```
-
 
 #Damage analysis
 This chunk produces Boxplots of the evaluation metrics for each simulation type.
@@ -1061,7 +1182,7 @@ AttackStratRoundData %>% #need to remove infinte values
   facet_wrap(~alpha) +
   scale_x_continuous(labels=scales::percent) + 
   scale_y_continuous(labels=scales::percent) +
-  coord_cartesian(x = c(0,0.4)) +
+  coord_cartesian(x = c(0,0.3)) +
   labs(title = "Change in Blackout size as nodes are attacked using multiple strategies" , 
        x = "Percent of elements attacked", 
        y = "Performance drop",
@@ -1090,17 +1211,17 @@ test3 <- map2_df(.x= MapPairs$Var1, .y=MapPairs$Var2, ~{
   test2   %>%
     filter(alpha ==.y) %>%
     group_by(alpha) %>%
-    mutate(acc = accuracy(., estimate = r1, truth =  r2),
-           AlphaRMSE = rmse(., estimate =rankblack.x, truth =  rankblack.y)) %>%
+    mutate(acc = accuracy(., estimate = r1, truth =  r2) %>% pull(.estimate),
+           AlphaRMSE = rmse(., estimate =rankblack.x, truth =  rankblack.y) %>% pull(.estimate)) %>%
     filter(simulationID ==.x) %>%
     group_by(simulationID, alpha) %>%
-    summarise(RMSE = rmse(., estimate =rankblack.x, truth =  rankblack.y), #measures for each sim ID for that class
-              RSQ = rsq(., estimate =rankblack.x, truth =  rankblack.y),
+    summarise(RMSE = rmse(., estimate =rankblack.x, truth =  rankblack.y)%>% pull(.estimate), #measures for each sim ID for that class
+              RSQ = rsq(., estimate =rankblack.x, truth =  rankblack.y) %>% pull(.estimate),
               CorrectRank = sum(CorrectRank, na.rm = T),
               CorrectPerc = n(),
               AlphaAccuracy = first(acc),
               AlphaRMSE = first(AlphaRMSE), #measures the whole class
-              accuracy = accuracy(., estimate = r1, truth =  r2)
+              accuracy = accuracy(., estimate = r1, truth =  r2)%>% pull(.estimate)
              ) %>% 
     ungroup
           
@@ -1378,9 +1499,8 @@ with(., postResample(Length, geodist)) %>%
 
 
 ##Map Geo points to UK regions
+
 ```{r}
-
-
 #Map to regions of UK
 
 ShapeFolder <- "/home/jonno/Dropbox/SSE/Empty Homes/ShapeFiles/Local_Authority_Districts_December_2014_Ultra_Generalised_Clipped_Boundaries_in_Great_Britain"
@@ -1397,12 +1517,11 @@ g3 <- set.vertex.attribute(g2, "Lat", index = NApoints, value = AllPoints$Lat) %
 Positioning <- matrix(c(get.vertex.attribute(g3, "Lon"),
                         get.vertex.attribute(g3, "Lat")),
                       ncol = 2)
-
-g3 %>%
-  simplify(., remove.multiple = T, remove.loops = T) %>% 
-    plot(.,vertex.size=.8, edge.arrow.size=.4, vertex.label=NA, layout = Positioning)
+```
 
 
+###Base Map
+```{r}
 test <- Positioning %>% as.tibble %>%
   rename(Longitude = V1, Latitude = V2)
 
@@ -1470,6 +1589,69 @@ dev.off()
 ```
 
 
+###GGplot map
+
+```{r}
+#create dataframe of graph
+test <- g3 %>%
+   # simplify(., remove.multiple = T, remove.loops = T) %>%
+  as_data_frame(.) %>%
+  select(from, to, Link, Voltage) %>%
+gather(key = "type", value = "Node", -Voltage,-Link) %>%
+  left_join(Positioning %>% as_tibble() %>%
+  mutate(Node = get.vertex.attribute(g3, "name")))
+
+set.seed(2346)
+  BaseCoords <- layout_nicely(g3) %>% 
+    as_tibble %>% 
+    mutate(Node = names(V(g)))
+
+    CoordLimstest <-test %>%
+    select(V1:V2) %>%
+    summarise_all(funs(min, max, mean, sd))
+    
+  CoordLims <-BaseCoords %>%
+    select(V1:V2) %>%
+    summarise_all(funs(min, max, mean, sd))
+
+  BaseCoords <- BaseCoords %>%
+    mutate(V1 = (V1-CoordLims$V1_min)/(CoordLims$V1_max-CoordLims$V1_min),
+           V2 =  (V2-CoordLims$V2_min)/(CoordLims$V2_max-CoordLims$V2_min),
+           V1 = V1*(CoordLimstest$V1_max-CoordLimstest$V1_min)+CoordLimstest$V1_min,
+           V2 = V2*(CoordLimstest$V2_max-CoordLimstest$V2_min)+CoordLimstest$V2_min)
+
+  
+test2 <- test %>%
+  select(-V1, -V2) %>%
+left_join(BaseCoords, by = "Node") %>%
+  mutate(PositionType = "Fruchterman & Reingold ") %>%
+  bind_rows(., test %>% mutate(PositionType = "Geo Space"))
+    
+#plot graph as ggplot
+test2 %>%
+  mutate(Voltage = factor(Voltage),
+         PositionType = factor(PositionType),
+         PositionType = fct_relevel(PositionType, "Geo Space", after = 0)) %>%
+  ggplot(aes(x = V1, y = V2)) + 
+  geom_line(aes(colour = Voltage, group = Link)) +
+  facet_grid(~PositionType, scales = "free") +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.y=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks.y=element_blank())
+ggsave(file.path(FiguresFolder, "ggMapColouredEdges.pdf"))
+  
+```
+
+
+
+```{r}
+
+```
+
+
 #Tweaking the package
 The below code is used to tweak the R package, add to the documentation etc, etc
 
@@ -1480,6 +1662,7 @@ setwd( "/home/jonno/PowerGridNetworking")
 document()
 setwd("/home/jonno")
 install("PowerGridNetworking")
+detach("package:PowergridNetworking", unload = TRUE)
 library(PowerGridNetworking)
 
 ```
