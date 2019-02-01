@@ -53,6 +53,8 @@ StratAttackWd <- "/media/jonno/Seagate Expansion Drive/ProportionalLoading/Strat
 
 source("/home/jonno/Create_ETYS_network/SubCode/LoadData2.R")
 
+list.files("/home/jonno/Useful_PhD__R_Functions", pattern = ".R", full.names = T) %>%
+  walk(~source(.x))
 
 #FOr NetSci
 #FiguresFolder <- "/home/jonno/Dropbox/Apps/ShareLaTeX/NetSci2018 Poster/Figures"
@@ -90,7 +92,7 @@ saveRDS(DeleteOrders, filename)
 
 #Set alpha colour gradient
 ```{r}
-  AlphaGrad <-scale_colour_gradientn(colors = c("red",   "limegreen"),
+  AlphaGrad <- scale_colour_gradientn(colors = c("red",   "limegreen"),
                           breaks = c(1,2,7,20,50),
                           trans = "log",
                           values = scales::rescale((c(0, 6, 7, 20, 50))),
@@ -596,28 +598,6 @@ file.path(Saved_Sims, new.type) %>%
 AllRemovedNodes <- list.files(Deletion_Order_Folder, full.names = TRUE) %>%
   map_df(~read_rds(.x))
 
-
-CleanNames <- function(df, TargetColumn, AlphaOrder){
-temp <- df  %>%
-  mutate_(temp1 = TargetColumn) %>%
- mutate(temp2 = temp1,
-          temp2 = temp1 %>%
-           str_replace_all(., "_", " ") %>%
-           str_extract_all(., "([0-9])+")%>% as.numeric(.)/100,
-temp3 = temp1 %>%
-  str_replace_all(., "_", " ") %>%
-  str_extract_all(., "([aA-zZ\\s])+", T) %>%
-  paste0(., ifelse(is.na(temp2), "", temp2)),
-        temp3 = temp3 %>% as.factor() %>%
-  fct_relevel(., AlphaOrder)
-) %>%
-  select(temp3)
-temp <-temp  %>% set_names(paste0(TargetColumn,"2")) 
- 
-temp <- bind_cols(df, temp)
-return(temp)
-}
-
 ```
 
 ##Number of round per line-type
@@ -841,47 +821,9 @@ This chunk produces Boxplots of the evaluation metrics for each simulation type.
 It isn't hugley interesting so isn't included.
 
 ```{r}
-#compares the damge of each line limit to the real damage using several metrics
-DamageComparison <- function(df, Target = "Blackout"){
-  
- df <- df %>% rename_(Target = Target)
-  
-  1:100 %>% map_df(~{
-
-SimAttack <- df %>%
-  filter(simulationID == .x) %>%
-  select(Target, alpha, NodesAttacked) %>% 
-  spread(key = alpha, value = Target) %>%
-   select(-NodesAttacked) %>%
-  filter(Real_Limits !=1)
-
-SimAttack[is.na(SimAttack)] <- 1
-  
-  test2 <- SimAttack %>% map_df(~{
-   c(postResample(.x, SimAttack$Real_Limits) , 
-  mean(abs((SimAttack$Real_Limits - .x)/SimAttack$Real_Limits), na.rm = T)
-  ) %>%
-  matrix %>%
-  t %>%
-  data.frame() %>% 
-      set_names(names(postResample(SimAttack$Real_Limits, .x)), "MAPE" )
-}
-) %>% mutate(type = names(SimAttack),
-             SimulationID = .x)
-
-}) %>% 
-  rename(alpha  = type) %>%
-  filter(alpha != "Real_Limits") %>%
-    # mutate(alpha = ifelse(alpha== "Infinite_Limits","Inf", alpha),
-    #      alpha = gsub("alpha_value_", "", alpha),
-    #      alpha = as.numeric(alpha)/100) 
-      CleanNames(., "alpha", AlphaOrder) 
-}
-
-#Sets up the plot for comparing different metrics, the metric of choice info is then added on
 
 BasePlot <- function(df){
-
+#Sets up the plot for comparing different metrics, the metric of choice info is then added on
   df %>%
     ggplot(aes(x= alpha2, fill = alpha2)) +
     theme(legend.position = "none",  
@@ -1194,37 +1136,6 @@ test %>% select(alpha, accuracy, RMSE) %>%group_by(alpha) %>% summarise_all(funs
 
 #Geo Points
 
-function to help check the geo points
-```{r}
-calcgeodist <- function(points, trans2){
-  #calculates the distance between all nodes in the network. produces distance for both the cable length from the data and the geodistance using the coordinates. After using this function the error can be found.
-  #The columns used are Lat and Lon
-#select variables
-TempPoints <- points %>%
-select(name, Lat, Lon) 
-
-#Add on cable length
-CableTest <- trans2 %>%
-    mutate( Length = OHL.Length + Cable.Length ) %>%
-  select(Bus.1, Bus.2, Length) %>%
-  left_join(., TempPoints, by = c("Bus.1"= "name")) %>%
-    left_join(., TempPoints, by = c("Bus.2"= "name")) 
-
-#Find distance based on coordinates
-test <- 1:nrow(CableTest) %>%
-  map_df(~{
-    CableTest[.x,] %>%
-      mutate(geodist = distm(as.matrix(data_frame(Lon.x, Lat.x)), 
-                         as.matrix(data_frame(Lon.y, Lat.y)))/1000) #convert to meters
-    
-  }) %>%
-  mutate(geodist = round(geodist, 2),
-         diff = Length - geodist,
-         absdiff = abs(diff),
-         ratio = absdiff/Length)
-}
-```
-
 ##Load data
 
 ```{r}
@@ -1417,52 +1328,9 @@ Positioning <- matrix(c(get.vertex.attribute(g3, "Lon"),
 
 ```{r}
 
-GeoAndForceCoords <- function(g, NodePos, seed= 2346){
-  #This function takes the graph and a data frame of three columns Node (name of the nodes) and Longitude and Latitude.
-  #The function outputs a dataframe that allows the plotting of of a nodes by geography or fruchtman and reingold expansion
-  
-  test <- g %>%
-  as_data_frame(.) %>%
-  select(from, to, Link, Voltage) %>%
-gather(key = "type", value = "Node", -Voltage,-Link) %>%
-  left_join(NodePos)
-  
-  set.seed(seed)
-  BaseCoords <- layout_nicely(g) %>% 
-    as_tibble %>% 
-    mutate(Node = names(V(g))) %>%
-  rename(Latitude = V1,
-         Longitude = V2)
-
-    CoordLimstest <-test %>%
-    select(Latitude:Longitude) %>%
-    summarise_all(funs(min, max, mean, sd))
-    
-  CoordLims <-BaseCoords %>%
-        select(Latitude:Longitude) %>%
-    summarise_all(funs(min, max, mean, sd))
-
-  BaseCoords <- BaseCoords %>%
-    mutate(Latitude = (Latitude-CoordLims$Latitude_min)/(CoordLims$Latitude_max-CoordLims$Latitude_min),
-           Longitude =  (Longitude-CoordLims$Longitude_min)/(CoordLims$Longitude_max-CoordLims$Longitude_min),
-           Latitude = Latitude*(CoordLimstest$Latitude_max-CoordLimstest$Latitude_min)+CoordLimstest$Latitude_min,
-           Longitude = Longitude*(CoordLimstest$Longitude_max-CoordLimstest$Longitude_min)+CoordLimstest$Longitude_min)
-
-  
-test2 <- test %>%
-  select(-Latitude, -Longitude) %>%
-left_join(BaseCoords, by = "Node") %>%
-  mutate(PositionType = "Fruchterman & Reingold ") %>%
-  bind_rows(., test %>% mutate(PositionType = "Geo Space"))
-
-return(test2)
-  
-}
-
-
 test <- Positioning %>% as_tibble()%>%
-  rename(Latitude = V1,
-         Longitude = V2)  %>%
+  rename(Latitude = V2,
+         Longitude = V1)  %>%
   mutate(Node = get.vertex.attribute(g3, "name"),
          Degree = degree(g3),
          BalencedPower = get.vertex.attribute(g3, "BalencedPower"),
@@ -1477,7 +1345,7 @@ test %>%
   mutate(Voltage = factor(Voltage),
          PositionType = factor(PositionType),
          PositionType = fct_relevel(PositionType, "Geo Space", after = 0)) %>%
-  ggplot(aes(x = Latitude, y = Longitude)) + 
+  ggplot(aes(y = Latitude, x = Longitude)) + 
   geom_line(aes( group = Link)) +
   facet_grid(~PositionType) +
   geom_point(data = . %>% filter(Degree ==1), aes(colour = NodeType)) +
