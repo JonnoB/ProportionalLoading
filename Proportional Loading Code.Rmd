@@ -15,14 +15,13 @@ Open data on powergrid modelling
 https://www.sciencedirect.com/science/article/pii/S2352484716300877#f000005
 
 
-
-LoadData2 says that all with voltage 0 are transformers. This implies they cannot be tripped and should have 1e5 as capacity
+There are 4 lines which are overloaded from the beginning they are given artificial line limits to maintain grid integrity
 
 #Setup Block
 
 ```{r}
 
-packages <- c("tidyverse", "igraph","readr","readxl", "broom", "zoo", "stringr","foreach", "doMC",  "xtable", "geomnet", "ggnetwork", "rlang", "animation", "ggridges", "poweRlaw", "Rtsne", "caret", "ranger", "xtable", "broom", "modelr", "yardstick", "sf", "rgdal", "foreach", "doMC")
+packages <- c("tidyverse", "igraph","readr","readxl", "broom", "zoo", "stringr","xtable", "geomnet", "rlang", "animation", "caret", "modelr", "yardstick", "sf", "rgdal", "RColorBrewer", "geosphere")
 
 new.packages <- packages[!(packages %in% installed.packages()[,"Package"])]
 if(length(new.packages)) install.packages(new.packages)
@@ -51,8 +50,10 @@ Saved_Sims <- file.path(PLwd, "Saved_Sims")
 Deletion_Order_Folder <- file.path(PLwd, "DeletionOrder_Nodes")
 StratAttackWd <- "/media/jonno/Seagate Expansion Drive/ProportionalLoading/StratAttack"
 
-source("/home/jonno/Create_ETYS_network/SubCode/LoadData2.R")
+#Load necessary datasets and great the base powergrid network
+source(file.path("/home/jonno/ProportionalLoading", "CreateGBase.R"))
 
+#Load some other useful functions
 list.files("/home/jonno/Useful_PhD__R_Functions", pattern = ".R", full.names = T) %>%
   walk(~source(.x))
 
@@ -66,7 +67,7 @@ list.files("/home/jonno/Useful_PhD__R_Functions", pattern = ".R", full.names = T
 setwd(PLwd)
 
 #Ensure there is powerflow
-g <- PowerFlow(gbase, "FECK40")
+g <- PowerFlow(gbase, "GLLE")
 
 g %>%
   simplify(., remove.multiple = T, remove.loops = T) %>% 
@@ -116,7 +117,7 @@ EdgeAttr <- get.edge.attribute(g) %>% names %>%
    filter(Link.Limit!=1e5, Voltage!=0
          )
 
-PL_Limits <- alpha_levels %>% map(~{
+EdgeAttr2  <- alpha_levels %>% map(~{
 
   Proportional_Load(g, .x) %>% 
     get.edge.attribute(., "Link.Limit") %>%
@@ -129,9 +130,7 @@ PL_Limits <- alpha_levels %>% map(~{
           get.edge.attribute(g, "Link.Limit")!= 1e5)
          
 #The results
-
-EdgeAttr2 <- PL_Limits
-
+#This allows us to compare performance of PL edges with the modelled ones.
 Limit_Method_RMSE <- EdgeAttr2 %>%
   map_df(~{
    c(postResample(.x, EdgeAttr$Link.Limit) , 
@@ -152,101 +151,39 @@ Limit_Method_RMSE <- EdgeAttr2 %>%
            unlist) %>%
   #This bit converts the Level to numeric. Useful when Only Alpha is being analysed
   mutate(Level = as.numeric(Level)/100)
- 
-Limit_Method_RMSE %>% 
-ggplot(., aes(x = RMSE, y = MAPE, colour = Level)) + geom_point() +
-  AlphaGrad +
-  ggtitle("Error modelling line-limits using PL")
-ggsave(file.path(FiguresFolder, "LimitMethodRMSE.pdf"))
 
-Limit_Method_RMSE %>%
-ggplot(., aes(x = RMSE, y = MAPE, colour = Level)) + geom_point() +
-  AlphaGrad
 
-Limit_Method_RMSE %>%
-ggplot(., aes(x = MAPE, y = MAE, colour = Level)) + geom_point() +
-  AlphaGrad
-
+rm(EdgeAttr); rm(EdgeAttr2)
 ```
 
 #Load level plot
 ```{r}
-
 edges <- g %>% as_data_frame %>%
    mutate(alpha = Link.Limit/abs(PowerFlow),
           LoadLevel = 1/alpha,
           PercLL = percent_rank(LoadLevel),
           PercLinkLimit = percent_rank(Link.Limit),
           PercFlow = percent_rank(abs(PowerFlow)))
- 
-1/mean(edges$LoadLevel)
-c(1.05, 1.1, 1.2, 1.5, 2, 3, 5, 6, 7, 10, 15, 20, 50)
+
+
 LabelNames <- round(1/c(-.1, 0, .1,.2,.3,.4,.5,.6,.7,.8,.9,1), 2)
 LabelNames[1:2] <- c("", ">10") 
 
-
-ColourTypes <- data.frame(x=1:length(LabelNames[-c(1,2)]), y = LabelNames[-c(1,2)] %>% as.character %>% as.numeric())
-
-TempPlot <- ColourTypes %>%
-  ggplot(aes(x, y, colour = y)) +
-  geom_point() +
-  AlphaGrad
-
-AccBuild <- ggplot_build(TempPlot)
-AccBarCol <- c("blue", "blue",unique(AccBuild$data[[1]][[1]]))
-names(AccBarCol) <-LabelNames %>%  as.factor %>% fct_relevel(., LabelNames) %>% levels
-rm(TempPlot)
-
 #Uses only Alpha which is much easier for people to understand
  edges %>%
-  # filter(alpha>1)%>%
+   #filter(alpha>1)%>%
    filter(is.finite(alpha), Link.Limit!= 100000) %>%
    ggplot(aes(x = LoadLevel)) + 
    geom_histogram(bins = 10, aes(y = (..count..)/sum(..count..)))+ #remove the fill to make it black again , fill = rev(AccBarCol[-c(1:2)])
   scale_y_continuous(labels = scales::percent, breaks = seq(0,.5, by= 0.05)) +
    labs(x = expression(alpha*" level"), 
         y ="Percentage of total lines", 
-        title = expression("Distribution of "*alpha*" using real line limits under initial conditions"))+
- # annotate("text", x = .7, y = .2, label = "Mean Alpha = 5.4",  size=7) +#removed as can be stated in caption
+        title = expression("Distribution of "*alpha*" using real line limits under initial conditions")) +
    scale_x_reverse(breaks = seq(1,-.1, by=-0.1), labels= rev(LabelNames))
-
- # edges %>%
- #   filter(is.finite(alpha), Link.Limit!= 100000) %>%
- #   ggplot(aes(x = LoadLevel)) + geom_histogram(bins = 10, aes(y = (..count..)/sum(..count..)))+ 
- #  scale_y_continuous(labels = scales::percent, breaks = seq(0,.5, by= 0.05)) +
- #  scale_x_continuous( breaks = seq(-1,5, by=0.1), labels = scales::percent)+ 
- #   labs(x = "Load Level", y ="Percentage of total lines", title = "Distribution of Load Level using real line limits under initial conditions") +
- #    annotate("text", x = .7, y = .2, label = "Mean Load Level = 19%",  size=7)
  ggsave(file.path(FiguresFolder,"LoadLevel.pdf"))
 
- edges %>%
-   filter(is.finite(alpha), Link.Limit!= 100000) %>%
-   ggplot(aes(x = LoadLevel, colour = as.factor(Voltage))) + geom_density()
- 
- edges %>%
-   filter(is.finite(alpha), Link.Limit!= 100000) %>%
-   summarise(meanA = mean(alpha),
-             medianA = median(alpha),
-             meanLL = mean(LoadLevel),
-             medianLL = median(LoadLevel))
- 
- median(abs(edges$Link.Limit/edges$PowerFlow))
- mean(abs(edges$Link.Limit/edges$PowerFlow))
- 
- # edges %>%
- #   filter(Link.Limit != 1e5,
- #          Voltage !=0) %>%
- #   ggplot(aes(x = abs(PowerFlow), y = LoadLevel, colour = as.factor(Voltage))) +
- #   geom_point() +
- #   labs(x= "Absolute Power Flow MW", y="Load Level", title = "Relationship between power flow and Load Level", colour = "Voltage") 
- #  ggsave(file.path(FiguresFolder,"PowerFlowvsVoltage.pdf"))
-
- # edges %>%
- #   filter(Link.Limit != 1e5,
- #          Voltage != 0) %>%
- #   ggplot(aes(x = PercFlow, y = PercLL, colour = as.factor(Voltage))) +
- #   geom_point()
-
+median(abs(edges$Link.Limit/edges$PowerFlow))
+mean(abs(edges$Link.Limit/edges$PowerFlow))
 ```
 
 #Generate Attack data
@@ -294,7 +231,7 @@ Should the function should be changed so that it can handle edges as well as nod
 ```{r}
 
 #The vector of alpha values to be tested
-alpha_vector <- c(1.05, 1.1, 1.2, 1.5, 2, 3, 5)
+alpha_vector <- c(1.05, 1.1, 1.2, 1.5, 2, 3, 5, 7, 10, 15, 20, 50)
 setwd(Saved_Sims)
 #alpha_vector <- c(35)
 
@@ -319,6 +256,17 @@ alpha_vector %>% walk(~{
 
 ##Modelled limits
 
+
+```{r}
+table(ntile(ModelInputVars$Voltage,3),ntile(ModelInputVars$Link.Limit,3))
+
+table(ntile(ModelInputVars$Voltage,3),ntile(ModelInputVars$Length,3))
+
+table(ntile(ModelInputVars$Link.Limit,4),ntile(ModelInputVars$Elec_Centrality,4))
+
+```
+
+
 ```{r}
 
 #Set seed and create model input variables
@@ -326,47 +274,47 @@ set.seed(1)
 ModelInputVars <- g %>% as_data_frame %>%
   mutate(absPF = abs(PowerFlow),
          Voltage = as.factor(Voltage)) %>%
-  select(Link.Limit, Voltage, absPF, Link, Length)# %>%
- # mutate_if(is.numeric, funs(scale(.) %>% as.vector))
+  select(Link.Limit, Voltage, absPF, Link, Length)
+
+ModelInputVars <- g %>% as_data_frame %>% left_join(.,  ElectricalCentrality(g)$EdgeEC %>% 
+                rename(Elec_Centrality = ElectricalCentrality, Link = Edgename)) %>%
+  mutate(absPF = abs(PowerFlow),
+         Voltage = as.factor(Voltage),
+         Centrality =log10(edge_betweenness(g)+1),
+         LengthQuart = ntile(Length, 4),
+         absPFQuart = ntile(absPF, 4),
+         LogLink.Limit = log10(Link.Limit)) 
 
 #generate k=10 crossfold validated model
 models <- ModelInputVars %>%
   filter(Link.Limit != 1e5) %>%
   crossv_kfold(k = 10) %>%
-  mutate(model = map(train, ~ lm(Link.Limit ~ Voltage + Length, data = .)))
+  #The log limit of the model is used to make it more normally distributed
+  mutate(model = map(train, ~ lm(LogLink.Limit ~ Voltage + Elec_Centrality, data = .)))
 
 #create predictions for each edge in the network
 predictions <- models %>%
-  unnest(map2(model, test, ~ augment(.x, newdata = .y)))
+  unnest(map2(model, test, ~ augment(.x, newdata = .y))) %>%
+  mutate(.fitted = 10^.fitted)
+
+ metrics(predictions , Link.Limit, .fitted);  mean(abs(predictions$.fitted-predictions$Link.Limit)/predictions$Link.Limit)
 
 #Look at coefficiients
 ModStats <- models %>%
   unnest(map(model, ~ tidy(.x))) %>%
    select(.id, term, estimate) %>%
    spread(key = term, value = estimate) %>% 
-   select(-.id)
-   bind_rows(ModStats %>% summarise_all(mean) %>% mutate(type = "mean"),
+   select(-.id) 
+   
+bind_rows(ModStats %>% summarise_all(mean) %>% mutate(type = "mean"),
               ModStats %>% summarise_all(sd) %>% mutate(type = "sd")) %>%
      select(type, everything()) %>%
    #  mutate_if(is.numeric, signif, digits = 2) %>%
-xtable(.,  caption = "Mean model coefficients and standard deviation across 10-fold cross-validation", label = "tab:ModCoeffs") %>%
+xtable(.,  
+       caption = "Mean model coefficients and standard deviation across 10-fold cross-validation", 
+       label = "tab:ModCoeffs") %>%
    print(type = "latex", file = file.path(FiguresFolder, "ModCoeffs.txt"))
  
-   ggplot(aes(x = term, y = estimate)) + 
-   geom_boxplot()
- 
- metrics(predictions ,Link.Limit, .fitted)
- #mape 
- mean(abs(predictions$.fitted-predictions$Link.Limit)/predictions$Link.Limit)
- 
-
-predictions %>%
-  mutate(residual = (.fitted - Link.Limit)/Link.Limit) %>% #doesn't need to be relative. absolute gives half a random cloud
-  select(Voltage, residual, absPF, Length) %>%
-  ggplot(aes(log10(Length), residual)) +
-  geom_point() +
-  facet_wrap(~ Voltage)
-
 #Create new edge limits using the predictions
 NewEdges <- tibble(Link = get.edge.attribute(g, "Link") ) %>%
   left_join(., predictions) %>%
@@ -387,29 +335,6 @@ SaveMultiAttacks(LinModLims, DeleteOrders, folder, TotalAttackRounds = AttackRou
 
 ```
 
-
-##Extend the experiment
-This is used to extend the original experiment from 150 node removals to complete collapse.
-The whole experiment has been updated so this code chunk is no longer useful.
-It is kept in for completness
-```{r}
- 
-# setwd(PLwd)
-# directories <- list.dirs()
-# 
-# directories[grepl("value_",directories)][-c(1,2,3,4,5,6)] %>% 
-#   walk(~{
-#     setwd(file.path(PLwd, .x))
-#     print(.x)
-#     ExtendMulltiAttack(list.files(), DeleteOrders)
-#     gc()
-#   }
-# )
-
-
-```
-
-
 #Extracting stats
 
 Extracting stats is slow this extracts the stats and saves them as a file.
@@ -427,7 +352,6 @@ AttackRoundData <- list.files(path = file.path(PLwd,"SummaryData"),
 
 
 ```
-
 
 #Construct attack summaries
 
@@ -681,28 +605,21 @@ ggplot(aes(x = Overloaded, y = Rounds, colour = alpha))  + geom_point() +
     cummeanfrac = cummean/tot,
             cummedianfrac = cummedian/tot)
 
-
-
-  
 LossFractionByRound %>%
   filter(type == "Node", RemovalType != "Targeted") %>%
   ggplot(aes(x = RoundRemoved, y = cummean, group = alpha, colour = alpha)) + geom_line() + 
   facet_wrap(~RemovalType)
   
-
-
 Loss2 <- AllRemovedNodes %>%
   group_by(Sim, alpha, type, RoundRemoved, RemovalType) %>%
   summarise(counts = n()) %>%
   group_by(Sim, alpha, type, RemovalType) %>%
   mutate(cumsum = cumsum(counts)) 
 
-
 Loss2 %>%
   filter(type == "Node", alpha == "alpha_value_300", RemovalType != "Targeted") %>%
   ggplot(aes(x = RoundRemoved, y = cumsum, group = Sim, colour = alpha)) + geom_line() + 
   facet_wrap(.~RemovalType, scales = "free_y")
-
 
 Loss3 <- Loss2 %>%
   group_by(Sim, type, alpha, RemovalType) %>%
@@ -817,9 +734,7 @@ HowManyNAs %>%
 ```
 
 #Damage analysis
-This chunk produces Boxplots of the evaluation metrics for each simulation type.
-It isn't hugley interesting so isn't included.
-
+This can be expanded to look at different metrics
 ```{r}
 
 BasePlot <- function(df){
@@ -847,101 +762,34 @@ AccPlot <- AccuracyAnalysis  %>% BasePlot
        title = expression("RMSE against real line limits for all calculated "*alpha*" levels") )
 ggsave(file.path(FiguresFolder, "RMSEChange.pdf"))
 
-
-AccPlot + geom_boxplot(aes(y = Rsquared)) +
-  labs(x = "alpha", title = "Rsquared against real line limits as alpha increases") 
-
-AccPlot + geom_boxplot(aes(y = MAE)) +
-  labs(x = "alpha", title = "MAE against real line limits as alpha increases") 
-
-AccPlot + geom_boxplot(aes(y = log(MAPE))) +
-  labs(x = "alpha", title = "MAPE agtest %>%
-  group_by(alpha, alpha1) %>%
-  summarise(Accuracy = first(AlphaAccuracy)) %>% #AlphaAccuracy
-  ggplot(aes(x= alpha, y = Accuracy, fill = alpha)) +
-  geom_col() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
-  labs(title= "The overall rank accuracy in terms of damage done by alpha level", 
-       y = "Damage rank accuracy across entire simulation",
-       x = "Line limit settings") +
-ainst real line limits as alpha increases") 
-
-
-#Analysis for giant component size
-
-AccuracyAnalysisGC <- DamageComparison(AttackRoundData, "GCfract")
-
-AccuracyAnalysisGC %>%
-  select(-SimulationID,-alpha) %>%
-  group_by(alpha2) %>%
-  summarise_all(funs(mean, median), na.rm = T)
-
-# AccuracyAnalysisGC %>% BasePlot + geom_boxplot(aes(y = RMSE)) +
-#   labs(x = "alpha", title = "GCfract RMSE against real line limits as alpha increases") 
-# ggsave(file.path(FiguresFolder, "RMSEChangeGCfract.pdf"))
-
-
 ```
 
 
 #Strategy difference
 
 See the difference between strategies
-
-```{r}
-
-ElecCen1<- ElectricalCentrality(g)
-
-StratAttackVect <- c(as_data_frame(g, what = "vertices") %>% 
-  as_tibble %>%
-      mutate(metric = degree(g)) %>%
-      arrange(desc(metric)) %>% .$name,
-
-as_data_frame(g, what = "vertices") %>%
-      mutate(metric = EntropicDegree(g, Scale = TRUE)) %>%
-      arrange(desc(metric)) %>% .$name,
-
-as_data_frame(g, what = "vertices") %>%
-      mutate(metric = EntropicDegree(g, value = "PowerFlow", Scale = TRUE)) %>%
-      arrange(desc(metric)) %>% .$name,
-
-
-ElecCen1$NodeEC %>% arrange(-NodeEC) %>% .$Bus.Name,
-
- as_data_frame(g, what = "vertices") %>%
-      mutate(metric = betweenness(g)) %>%
-      arrange(desc(metric)) %>% .$name
-) %>% matrix(., nrow = 5, byrow = T) %>%
-  as_tibble %>%
-  mutate(SimulationID = paste0("Simulation_ID_",1:5)) %>%
-  select(SimulationID, everything()) %>%
-  setNames(c("SimulationID", paste0("Target", 1:958)))
-
-
- 
-```
-
-
 ##Different strategies 1 load level
 ```{r}
 #The vector of alpha values to be tested
+StratAttackVect <- CreateStrategyAttackDf(g)
+
 alpha_vector <- c(1.05, 1.1,1.5, 2, 5,  10, 20, 50)
 
 setwd(StratAttackWd)
 
 #Create the simulations for each of the alpha avalues using 100 simulations for each
 alpha_vector %>% walk(~{
-  gProp <- Proportional_Load(g, alpha = .x)
-  
-  folder <- paste0("alpha_value_",  .x*100)
-  #create folder if it doesn't already exist
-  if(!file.exists(folder)){
-    dir.create(folder)
+    gProp <- Proportional_Load(g, alpha = .x)
+    
+    folder <- paste0("alpha_value_",  .x*100)
+    #create folder if it doesn't already exist
+    if(!file.exists(folder)){
+      dir.create(folder)
+    }
+    
+    SaveMultiAttacks(gProp, StratAttackVect, folder, TotalAttackRounds = AttackRounds, CascadeMode = T)
+    
   }
-  
-  SaveMultiAttacks(gProp, StratAttackVect, folder, TotalAttackRounds = AttackRounds, CascadeMode = T)
-  
-}
   
 )
 
@@ -1172,7 +1020,7 @@ NApoints <-points %>%
 pointsTemp <- points %>%
     filter(!grepl("Derby_South_132kV", SubstationName)) %>% #The node is definately not Derby south
   mutate(Lat = ifelse(!is.na(Lat.2), Lat.2, Lat),
-         Lon = ifelse(!is.na(Lon.2), Lon.2, Lon))
+         Lon = ifelse(!is.na(Lon.2), Lon.2, Lon)) 
 
 g2 <- set.vertex.attribute(gbase, "Lat", value = pointsTemp$Lat) %>%
   set.vertex.attribute(., "Lon",value =  pointsTemp$Lon)
@@ -1195,16 +1043,21 @@ AllPoints <- NApoints  %>% map_df(~{
 Some of the geopoints are not in the right location. Here I check the lat long distance with the distance provided by dataset
 
 ```{r}
-JieCoords <- calcgeodist(points, trans2)
+
+Cabledist <- trans2 %>%
+    mutate( Length = OHL.Length + Cable.Length ) %>%
+    select(Bus.1, Bus.2, Length)
+
+JieCoords <- calcgeodist(points, Cabledist)
 JieCoords2 <- points %>%
     mutate(Lat = ifelse(name=="TILB40", Lat-10,Lat)) %>%
-  calcgeodist(., trans2)
+  calcgeodist(., Cabledist)
 
 JonnoCoords <- points %>%
   filter(SubstationName!="Derby_South_132kV") %>% #The node is definately not Derby south
   mutate(Lat = ifelse(!is.na(Lat.2), Lat.2, Lat),
          Lon = ifelse(!is.na(Lon.2), Lon.2, Lon)) %>%
-  calcgeodist(., trans2)
+  calcgeodist(., Cabledist)
 
 
 #calculate error
@@ -1267,7 +1120,10 @@ point2 <- points %>%
 
 #subset the trans2 data to make it faster to geolocate
 trans3 <- trans2 %>%
-filter( grepl(target, Bus.1) | grepl(target, Bus.2))
+filter( grepl(target, Bus.1) | grepl(target, Bus.2)) %>%
+    mutate( Length = OHL.Length + Cable.Length ) %>%
+    select(Bus.1, Bus.2, Length)
+
 
 #find the error for each coordinate in the grid.
 AllError <- 1:nrow(testCoords) %>%
@@ -1307,12 +1163,8 @@ with(., postResample(Length, geodist)) %>%
 ##Map Geo points to UK regions
 
 ```{r}
-
 ShapeFolder <- "/home/jonno/Dropbox/SSE/Empty Homes/ShapeFiles/Local_Authority_Districts_December_2014_Ultra_Generalised_Clipped_Boundaries_in_Great_Britain"
 
-library(sf)
-library(rgdal)
-library(RColorBrewer)
 UKLADS <- readOGR(file.path(ShapeFolder, "Local_Authority_Districts_December_2014_Ultra_Generalised_Clipped_Boundaries_in_Great_Britain.shp"))
   
 g3 <- set.vertex.attribute(g2, "Lat", index = NApoints, value = AllPoints$Lat) %>%
