@@ -39,8 +39,25 @@ trans2 <- TransportData[,17:59] %>%
     Combines = n() #tells howmany parallel edges between two different sites were combined together, is about 300 edges
   ) %>% 
   ungroup %>%
-  mutate(Link = paste(Bus.1,Bus.2, sep = "-"))
+  mutate(Link = paste(Bus.1,Bus.2, sep = "-"),
+#These f lines have a lower limit than thier initial values. They are given the median value for thier voltage
+         Link.Limit = case_when(
+            Link == "BRAC-BONB" ~1090,
+            Link == "FAUG-LAGG" ~329, #This is just an arbitrary number as this line is loaded so much more than median
+            Link == "KEIT-KINT" ~1090,
+            Link == "LAGG-MILW" ~203,
+            TRUE ~ Link.Limit
+          )
+         )
 
+#make sure everything is under limit
+# as_data_frame(gbase) %>%
+#   group_by(Voltage) %>%
+#   summarise(mean = mean(Link.Limit),
+#             median = median(Link.Limit))
+# 
+# as_data_frame(gbase) %>%
+#   filter(Link.Limit<PowerFlow)
 
 gbase <- graph_from_data_frame(trans2, directed=FALSE, vertices = VertexMetaData)
 
@@ -57,14 +74,3 @@ gbase <- set_edge_attr(gbase, "Voltage",
                                     get.vertex.attribute(gbase, "Voltage", get.edgelist(gbase)[,2]))
                        ) %>%
   PowerFlow(., SlackRef = "GLLE" )
-
-#Finds edges with no powerflow
-UselessEdge <- (get.edge.attribute(gbase, "PowerFlow")==0)
-print(get.edge.attribute(gbase, "name", index = (1:length(UselessEdge))[UselessEdge]) )
-#Remove Edges that are not doing anything and then any islanded nodes.
-#This is done before the simulation begins
-gbase <- delete.edges(gbase, (1:length(UselessEdge))[UselessEdge]) %>%
-  BalencedGenDem(., "Demand", "Generation")
-rm(UselessEdge)
-
-

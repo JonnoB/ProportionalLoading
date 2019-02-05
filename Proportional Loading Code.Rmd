@@ -67,11 +67,12 @@ list.files("/home/jonno/Useful_PhD__R_Functions", pattern = ".R", full.names = T
 setwd(PLwd)
 
 #Ensure there is powerflow
-g <- PowerFlow(gbase, "GLLE")
+#Remove Dead Ends
+g <- RemoveDeadEnds(gbase) 
+#provide correct power flow
+g <- g %>%
+  PowerFlow(., SlackRef = get.vertex.attribute(., "name")[which.min(get.vertex.attribute(., "Bus.Order"))] )
 
-g %>%
-  simplify(., remove.multiple = T, remove.loops = T) %>% 
-    plot(.,vertex.size=.8, edge.arrow.size=.4, vertex.label=NA)
 
 NetworkStats(g) %>%
   xtable() %>% print(type = "latex", file = file.path(FiguresFolder, "NetworkStats.txt"))
@@ -212,7 +213,7 @@ Previously called Infinite limits
 
 setwd(Saved_Sims)
 
-folder <- "Test2" #"Topological"
+folder <- "Topological"
 
   if(!file.exists(folder)){
     dir.create(folder)
@@ -231,9 +232,8 @@ Should the function should be changed so that it can handle edges as well as nod
 ```{r}
 
 #The vector of alpha values to be tested
-alpha_vector <- c(1.05, 1.1, 1.2, 1.5, 2, 3, 5, 7, 10, 15, 20, 50)
+alpha_vector <- c(1.05, 1.1, 1.2, 1.5, 2, 3, 5, 7, 10, 15, 20, 50)[1:9]
 setwd(Saved_Sims)
-#alpha_vector <- c(35)
 
 #Create the simulations for each of the alpha avalues using 100 simulations for each
 alpha_vector %>% walk(~{
@@ -270,11 +270,6 @@ table(ntile(ModelInputVars$Link.Limit,4),ntile(ModelInputVars$Elec_Centrality,4)
 ```{r}
 
 #Set seed and create model input variables
-set.seed(1)
-ModelInputVars <- g %>% as_data_frame %>%
-  mutate(absPF = abs(PowerFlow),
-         Voltage = as.factor(Voltage)) %>%
-  select(Link.Limit, Voltage, absPF, Link, Length)
 
 ModelInputVars <- g %>% as_data_frame %>% left_join(.,  ElectricalCentrality(g)$EdgeEC %>% 
                 rename(Elec_Centrality = ElectricalCentrality, Link = Edgename)) %>%
@@ -286,11 +281,12 @@ ModelInputVars <- g %>% as_data_frame %>% left_join(.,  ElectricalCentrality(g)$
          LogLink.Limit = log10(Link.Limit)) 
 
 #generate k=10 crossfold validated model
+set.seed(1)
 models <- ModelInputVars %>%
   filter(Link.Limit != 1e5) %>%
   crossv_kfold(k = 10) %>%
   #The log limit of the model is used to make it more normally distributed
-  mutate(model = map(train, ~ lm(LogLink.Limit ~ Voltage + Elec_Centrality, data = .)))
+  mutate(model = map(train, ~ lm(LogLink.Limit ~ Voltage , data = .)))
 
 #create predictions for each edge in the network
 predictions <- models %>%
@@ -321,6 +317,7 @@ NewEdges <- tibble(Link = get.edge.attribute(g, "Link") ) %>%
   mutate(.fitted = ifelse(is.na(.fitted), 1e5, .fitted))
 
 LinModLims <- set_edge_attr(g, "Link.Limit", value = NewEdges$.fitted)
+saveRDS(LinModLims, file.path(PLwd, "LinModLims.rds"))
 
 #Generate simulations
 setwd(Saved_Sims)
@@ -982,240 +979,78 @@ test %>% select(alpha, accuracy, RMSE) %>%group_by(alpha) %>% summarise_all(funs
 ```
 
 
-#Geo Points
-
-##Load data
-
+#Plot
 ```{r}
+#load points
+ points <- read_csv(file.path(basewd, "point.csv"))
 
-library(geosphere)
-
-points <- read_csv(file.path(basewd, "point.csv"))
-  
+#split coords
 coords2 <-  str_split_fixed(string = points$Lat.2, pattern = ",", n = 2)
-
+#place coords in df
 points <- points %>%
   mutate(Lat.2 = coords2[,1] %>% as.numeric,
          Lon.2 = coords2[,2] %>% as.numeric)
+rm(coords2)
 
-points <- get.vertex.attribute(gbase, "name") %>% tibble(name = .) %>%
-  left_join(., points, by = c("name" = "Edges")) %>%
+#reduce to site level
+  pointsTemp <- points %>%
+    filter(!grepl("Derby_South_132kV", SubstationName)) %>% #The node is definately not Derby south
+  mutate(Lat = ifelse(!is.na(Lat.2), Lat.2, Lat),
+         Lon = ifelse(!is.na(Lon.2), Lon.2, Lon),
+         name = str_sub(Edges, 1, 4) %>% gsub("-|_", "",.)) %>%
+    select(name, Lat, Lon) %>%
+    group_by(name) %>%
+    summarise_all(funs(mean, diff={max(.)-min(.)})) %>%
+  rename(Lat = Lat_mean,
+         Lon = Lon_mean)
+  
+  #merge with all nodes
+  pointsTemp <- get.vertex.attribute(g, "name") %>% tibble(name = .) %>%
+  left_join(., pointsTemp) %>%
   group_by(name) %>%
   mutate(counts = n()) %>%
   ungroup %>%
   group_by(name) %>%
   mutate(count = n()) %>%
   ungroup
-
-```
-
-```{r}
-#Find all points with no coords
-NApoints <-points %>%
+  
+  #find nodes with no coords
+  NApoints <- pointsTemp %>%
   filter(is.na(Lon)) %>%
-  pull(name)
+  pull(name) %>% str_sub(., 1, 4) %>% gsub("-|_", "",.) %>%  unique()
 
-#add coords to graph
-
-pointsTemp <- points %>%
-    filter(!grepl("Derby_South_132kV", SubstationName)) %>% #The node is definately not Derby south
-  mutate(Lat = ifelse(!is.na(Lat.2), Lat.2, Lat),
-         Lon = ifelse(!is.na(Lon.2), Lon.2, Lon)) 
-
-g2 <- set.vertex.attribute(gbase, "Lat", value = pointsTemp$Lat) %>%
+  #make temporary network to find missing coords
+  g2 <- set.vertex.attribute(g, "Lat", value = pointsTemp$Lat) %>%
   set.vertex.attribute(., "Lon",value =  pointsTemp$Lon)
 
 #find the average coordinates of the nodes with no coordinates based on thier ego networks
 AllPoints <- NApoints  %>% map_df(~{
   
- points %>% 
+ pointsTemp %>% 
     filter(name %in% names(ego(g2, nodes = .x)[[1]])) %>%
     summarise(Lon = mean(Lon, na.rm = T),
               Lat = mean(Lat, na.rm = T),
               count = nrow(.), name = .x)
   
 })
-```
-
-
-##Check Geopoints
-
-Some of the geopoints are not in the right location. Here I check the lat long distance with the distance provided by dataset
-
-```{r}
-
-Cabledist <- trans2 %>%
-    mutate( Length = OHL.Length + Cable.Length ) %>%
-    select(Bus.1, Bus.2, Length)
-
-JieCoords <- calcgeodist(points, Cabledist)
-JieCoords2 <- points %>%
-    mutate(Lat = ifelse(name=="TILB40", Lat-10,Lat)) %>%
-  calcgeodist(., Cabledist)
-
-JonnoCoords <- points %>%
-  filter(SubstationName!="Derby_South_132kV") %>% #The node is definately not Derby south
-  mutate(Lat = ifelse(!is.na(Lat.2), Lat.2, Lat),
-         Lon = ifelse(!is.na(Lon.2), Lon.2, Lon)) %>%
-  calcgeodist(., Cabledist)
-
-
-#calculate error
-
-list(x= JieCoords, y = JieCoords2, z = JonnoCoords) %>%
-  map_df(~{
-    .x %>%
-  filter(complete.cases(.)) %>%
-with(., postResample(Length, geodist)) %>% 
-      tibble(value = ., type = names(.))%>%
-      spread(key = type, value = value)
-  }) %>% mutate(type = c("JieCoords", "JieCoords2", "JonnoCoords"))
-
-
-test <- unique(c(JonnoCoords$Bus.1, JonnoCoords$Bus.2)) %>% #substring(., 1,4) %>%
-  map_df(~{
-    
-    JonnoCoords %>% mutate(temp = paste(.$Bus.1, .$Bus.2)) %>%
-      #filter(Bus.1 == .x |Bus.2==.x) %>%
-      filter(grepl(pattern = .x, x = temp )) %>%
-      summarise(Error = sum(absdiff, na.rm = T),
-                count = n()) %>%
-      mutate(Bus = .x)
-    
-  })
-
-
-ErrorWales <- test %>%
-  filter(Bus %in% testRegion$name)
-
-test2 <- test %>%
-  mutate(Bus = substring(Bus, 1,4)) %>%
-  group_by(Bus) %>%
-  summarise_all(sum) %>%
-  arrange(-Error)
-
-
-```
-
-##Minimise error
-
-Some points are very hard to place having no clear location. This next section allows the points to be placed after searching across a grid to minimise the error with neighbouring vertices.
-
-```{r}
-target = "HUNE40"
-JonnoCoords %>%
-filter( grepl(target, Bus.1) |grepl(target, Bus.2))
-
-testg <- make_ego_graph(g2, nodes = target)[[1]]
-
-NodeNames <- vertex_attr(testg, "name")
-Lat <-vertex_attr(testg, "Lat") %>% .[!is.na(.)]
-Lon <- vertex_attr(testg, "Lon")  %>% .[!is.na(.)]
-
-#mak a grid of coordinates based on the neighbouring positions
-testCoords <- expand.grid(Lon = seq(min(Lon), max(Lon), length.out = 100),
-               Lat = seq(min(Lat), max(Lat), length.out = 100))
-point2 <- points %>%
-  filter(name %in% NodeNames) 
-
-#subset the trans2 data to make it faster to geolocate
-trans3 <- trans2 %>%
-filter( grepl(target, Bus.1) | grepl(target, Bus.2)) %>%
-    mutate( Length = OHL.Length + Cable.Length ) %>%
-    select(Bus.1, Bus.2, Length)
-
-
-#find the error for each coordinate in the grid.
-AllError <- 1:nrow(testCoords) %>%
-  map_df(~{
-    print(.x)
-    Out <- point2 %>%
-    mutate(Lon.2 = ifelse(name==target, testCoords$Lon[.x] , Lat.2),
-           Lat.2 = ifelse(name==target, testCoords$Lat[.x] , Lat.2)) %>%
-  mutate(Lat = ifelse(!is.na(Lat.2), Lat.2, Lat),
-         Lon = ifelse(!is.na(Lon.2), Lon.2, Lon)) %>%
-  calcgeodist(., trans3) %>%
-  filter(complete.cases(.)) %>%
-with(., postResample(Length, geodist)) %>% 
-      tibble(value = ., type = names(.))%>%
-      spread(key = type, value = value) %>%
-  mutate(Lat = testCoords$Lat[.x],
-         Lon = testCoords$Lon[.x] )
-    
-    return(Out)
-    
-  })
-
-#plot the results
-  AllError %>%
-    ggplot(aes(x = Lon, y = Lat, fill = RMSE)) + geom_tile()
   
-    AllError %>%
-    ggplot(aes(x = Lon, y = Lat, fill = Rsquared)) + geom_tile()
-
-      AllError %>%
-    ggplot(aes(x = Lon, y = Lat, fill = MAE)) + geom_tile()
-    
-#A better way to do this would be to get the x and y error then sum across all connected node to get the total error components. then move the node that distance on x and y. This makes the force of all the connecting nodes 0 and is the minimum error point.
-```
-
-
-##Map Geo points to UK regions
-
-```{r}
-ShapeFolder <- "/home/jonno/Dropbox/SSE/Empty Homes/ShapeFiles/Local_Authority_Districts_December_2014_Ultra_Generalised_Clipped_Boundaries_in_Great_Britain"
-
-UKLADS <- readOGR(file.path(ShapeFolder, "Local_Authority_Districts_December_2014_Ultra_Generalised_Clipped_Boundaries_in_Great_Britain.shp"))
-  
+#make final graph
 g3 <- set.vertex.attribute(g2, "Lat", index = NApoints, value = AllPoints$Lat) %>%
   set.vertex.attribute(., "Lon",index = NApoints, value = AllPoints$Lon)
 
 Positioning <- matrix(c(get.vertex.attribute(g3, "Lon"),
                         get.vertex.attribute(g3, "Lat")),
-                      ncol = 2)
+                      ncol = 2) %>% as_tibble()  %>%
+  rename(Latitude = V1,
+         Longitude = V2)
 ```
 
 
 ###GGplot map
 
-```{r}
-
-test <- Positioning %>% as_tibble()%>%
-  rename(Latitude = V2,
-         Longitude = V1)  %>%
-  mutate(Node = get.vertex.attribute(g3, "name"),
-         Degree = degree(g3),
-         BalencedPower = get.vertex.attribute(g3, "BalencedPower"),
-         NodeType = case_when(
-           BalencedPower<0 ~"Demand",
-           BalencedPower==0~"Transfer",
-           TRUE ~"Generation"
-         )) %>% GeoAndForceCoords(g3, .) 
-
-#This suggests that end transfers occur near the center of the network
-test %>%
-  mutate(Voltage = factor(Voltage),
-         PositionType = factor(PositionType),
-         PositionType = fct_relevel(PositionType, "Geo Space", after = 0)) %>%
-  ggplot(aes(y = Latitude, x = Longitude)) + 
-  geom_line(aes( group = Link)) +
-  facet_grid(~PositionType) +
-  geom_point(data = . %>% filter(Degree ==1), aes(colour = NodeType)) +
-    theme(axis.title.x=element_blank(),
-        axis.text.x=element_blank(),
-        axis.ticks.x=element_blank(),
-        axis.title.y=element_blank(),
-        axis.text.y=element_blank(),
-        axis.ticks.y=element_blank())
-
-
-```
-
 
 ```{r}
-GGmapData <- Positioning %>% as_tibble()%>%
-  rename(Latitude = V1,
-         Longitude = V2)  %>%
+GGmapData <- Positioning  %>%
   mutate(Node = get.vertex.attribute(g3, "name")) %>%
   GeoAndForceCoords(g3,.)
 

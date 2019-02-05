@@ -1,0 +1,202 @@
+---
+title: "Geo Matching"
+author: "Jonathan Bourne"
+date: "4 February 2019"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+Correcting and matching geo points for the network
+
+##Load data
+
+```{r}
+
+library(geosphere)
+
+points <- read_csv(file.path(basewd, "point.csv"))
+  
+coords2 <-  str_split_fixed(string = points$Lat.2, pattern = ",", n = 2)
+
+points <- points %>%
+  mutate(Lat.2 = coords2[,1] %>% as.numeric,
+         Lon.2 = coords2[,2] %>% as.numeric)
+
+points <- get.vertex.attribute(gbase, "name") %>% tibble(name = .) %>%
+  left_join(., points, by = c("name" = "Edges")) %>%
+  group_by(name) %>%
+  mutate(counts = n()) %>%
+  ungroup %>%
+  group_by(name) %>%
+  mutate(count = n()) %>%
+  ungroup
+
+```
+
+```{r}
+#Find all points with no coords
+NApoints <-points %>%
+  filter(is.na(Lon)) %>%
+  pull(name)
+
+#add coords to graph
+
+pointsTemp <- points %>%
+    filter(!grepl("Derby_South_132kV", SubstationName)) %>% #The node is definately not Derby south
+  mutate(Lat = ifelse(!is.na(Lat.2), Lat.2, Lat),
+         Lon = ifelse(!is.na(Lon.2), Lon.2, Lon)) 
+
+g2 <- set.vertex.attribute(gbase, "Lat", value = pointsTemp$Lat) %>%
+  set.vertex.attribute(., "Lon",value =  pointsTemp$Lon)
+
+#find the average coordinates of the nodes with no coordinates based on thier ego networks
+AllPoints <- NApoints  %>% map_df(~{
+  
+ points %>% 
+    filter(name %in% names(ego(g2, nodes = .x)[[1]])) %>%
+    summarise(Lon = mean(Lon, na.rm = T),
+              Lat = mean(Lat, na.rm = T),
+              count = nrow(.), name = .x)
+  
+})
+```
+
+
+##Check Geopoints
+
+Some of the geopoints are not in the right location. Here I check the lat long distance with the distance provided by dataset
+
+```{r}
+
+Cabledist <- trans2 %>%
+    mutate( Length = OHL.Length + Cable.Length ) %>%
+    select(Bus.1, Bus.2, Length)
+
+JieCoords <- calcgeodist(points, Cabledist)
+JieCoords2 <- points %>%
+    mutate(Lat = ifelse(name=="TILB40", Lat-10,Lat)) %>%
+  calcgeodist(., Cabledist)
+
+JonnoCoords <- points %>%
+  filter(SubstationName!="Derby_South_132kV") %>% #The node is definately not Derby south
+  mutate(Lat = ifelse(!is.na(Lat.2), Lat.2, Lat),
+         Lon = ifelse(!is.na(Lon.2), Lon.2, Lon)) %>%
+  calcgeodist(., Cabledist)
+
+
+#calculate error
+
+list(x= JieCoords, y = JieCoords2, z = JonnoCoords) %>%
+  map_df(~{
+    .x %>%
+  filter(complete.cases(.)) %>%
+with(., postResample(Length, geodist)) %>% 
+      tibble(value = ., type = names(.))%>%
+      spread(key = type, value = value)
+  }) %>% mutate(type = c("JieCoords", "JieCoords2", "JonnoCoords"))
+
+
+test <- unique(c(JonnoCoords$Bus.1, JonnoCoords$Bus.2)) %>% #substring(., 1,4) %>%
+  map_df(~{
+    
+    JonnoCoords %>% mutate(temp = paste(.$Bus.1, .$Bus.2)) %>%
+      #filter(Bus.1 == .x |Bus.2==.x) %>%
+      filter(grepl(pattern = .x, x = temp )) %>%
+      summarise(Error = sum(absdiff, na.rm = T),
+                count = n()) %>%
+      mutate(Bus = .x)
+    
+  })
+
+
+ErrorWales <- test %>%
+  filter(Bus %in% testRegion$name)
+
+test2 <- test %>%
+  mutate(Bus = substring(Bus, 1,4)) %>%
+  group_by(Bus) %>%
+  summarise_all(sum) %>%
+  arrange(-Error)
+
+
+```
+
+##Minimise error
+
+Some points are very hard to place having no clear location. This next section allows the points to be placed after searching across a grid to minimise the error with neighbouring vertices.
+
+```{r}
+target = "HUNE40"
+JonnoCoords %>%
+filter( grepl(target, Bus.1) |grepl(target, Bus.2))
+
+testg <- make_ego_graph(g2, nodes = target)[[1]]
+
+NodeNames <- vertex_attr(testg, "name")
+Lat <-vertex_attr(testg, "Lat") %>% .[!is.na(.)]
+Lon <- vertex_attr(testg, "Lon")  %>% .[!is.na(.)]
+
+#mak a grid of coordinates based on the neighbouring positions
+testCoords <- expand.grid(Lon = seq(min(Lon), max(Lon), length.out = 100),
+               Lat = seq(min(Lat), max(Lat), length.out = 100))
+point2 <- points %>%
+  filter(name %in% NodeNames) 
+
+#subset the trans2 data to make it faster to geolocate
+trans3 <- trans2 %>%
+filter( grepl(target, Bus.1) | grepl(target, Bus.2)) %>%
+    mutate( Length = OHL.Length + Cable.Length ) %>%
+    select(Bus.1, Bus.2, Length)
+
+
+#find the error for each coordinate in the grid.
+AllError <- 1:nrow(testCoords) %>%
+  map_df(~{
+    print(.x)
+    Out <- point2 %>%
+    mutate(Lon.2 = ifelse(name==target, testCoords$Lon[.x] , Lat.2),
+           Lat.2 = ifelse(name==target, testCoords$Lat[.x] , Lat.2)) %>%
+  mutate(Lat = ifelse(!is.na(Lat.2), Lat.2, Lat),
+         Lon = ifelse(!is.na(Lon.2), Lon.2, Lon)) %>%
+  calcgeodist(., trans3) %>%
+  filter(complete.cases(.)) %>%
+with(., postResample(Length, geodist)) %>% 
+      tibble(value = ., type = names(.))%>%
+      spread(key = type, value = value) %>%
+  mutate(Lat = testCoords$Lat[.x],
+         Lon = testCoords$Lon[.x] )
+    
+    return(Out)
+    
+  })
+
+#plot the results
+  AllError %>%
+    ggplot(aes(x = Lon, y = Lat, fill = RMSE)) + geom_tile()
+  
+    AllError %>%
+    ggplot(aes(x = Lon, y = Lat, fill = Rsquared)) + geom_tile()
+
+      AllError %>%
+    ggplot(aes(x = Lon, y = Lat, fill = MAE)) + geom_tile()
+    
+#A better way to do this would be to get the x and y error then sum across all connected node to get the total error components. then move the node that distance on x and y. This makes the force of all the connecting nodes 0 and is the minimum error point.
+```
+
+
+##Map Geo points to UK regions
+
+```{r}
+ShapeFolder <- "/home/jonno/Dropbox/SSE/Empty Homes/ShapeFiles/Local_Authority_Districts_December_2014_Ultra_Generalised_Clipped_Boundaries_in_Great_Britain"
+
+UKLADS <- readOGR(file.path(ShapeFolder, "Local_Authority_Districts_December_2014_Ultra_Generalised_Clipped_Boundaries_in_Great_Britain.shp"))
+  
+g3 <- set.vertex.attribute(g2, "Lat", index = NApoints, value = AllPoints$Lat) %>%
+  set.vertex.attribute(., "Lon",index = NApoints, value = AllPoints$Lon)
+
+Positioning <- matrix(c(get.vertex.attribute(g3, "Lon"),
+                        get.vertex.attribute(g3, "Lat")),
+                      ncol = 2)
+```
+
