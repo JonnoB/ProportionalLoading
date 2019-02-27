@@ -280,30 +280,56 @@ ModelInputVars <- g %>% as_data_frame %>% left_join(.,  ElectricalCentrality(g)$
          absPFQuart = ntile(absPF, 4),
          LogLink.Limit = log10(Link.Limit)) 
 
+#Create set of formula to model line limits
+FormulaDF <- formulas(~LogLink.Limit, 
+         Voltage_Only = ~Voltage,
+         VoltageLength = ~Voltage + Length,
+         VoltElecCent = ~Voltage + Elec_Centrality,
+         VoltPF = ~ Voltage + absPF) %>%
+  tibble(formulas = .) %>%
+  mutate(names = names(formulas)) 
+
 #generate k=10 crossfold validated model
-set.seed(1)
-models <- ModelInputVars %>%
-  filter(Link.Limit != 1e5) %>%
-  crossv_kfold(k = 10) %>%
-  #The log limit of the model is used to make it more normally distributed
-  mutate(model = map(train, ~ lm(LogLink.Limit ~ Voltage , data = .)))
+models  <- 1:nrow(FormulaDF) %>% map_df(~{
+           print(.x)
+           form <- as.formula(FormulaDF %>% pull(formulas) %>% .[[.x]])
+    set.seed(1)
+    ModelInputVars %>%
+      filter(Link.Limit != 1e5) %>%
+      crossv_kfold(k = 10) %>%
+      #The log limit of the model is used to make it more normally distributed
+      mutate(model = map(train, ~lm(form, data = .)
+                         ),
+              Modelname= FormulaDF %>% pull(names) %>% .[[.x]])#,
+          #   ) 
+
+})
+
 
 #create predictions for each edge in the network
 predictions <- models %>%
   unnest(map2(model, test, ~ augment(.x, newdata = .y))) %>%
   mutate(.fitted = 10^.fitted)
 
- metrics(predictions , Link.Limit, .fitted);  mean(abs(predictions$.fitted-predictions$Link.Limit)/predictions$Link.Limit)
+unique(predictions$Modelname) %>% map_df(~{
+  predictions <-  predictions %>% filter(Modelname==.x)
+  metrics(predictions , Link.Limit, .fitted) %>% select(-.estimator) %>% spread(key = .metric, value = .estimate) %>%
+   bind_cols(tibble(MAPE = mean(abs(predictions$.fitted-predictions$Link.Limit)/predictions$Link.Limit))) %>%
+    mutate(Modelname = .x)
+  
+})
+
+
 
 #Look at coefficiients
 ModStats <- models %>%
   unnest(map(model, ~ tidy(.x))) %>%
-   select(.id, term, estimate) %>%
+   select(.id, term, estimate, Modelname) %>%
    spread(key = term, value = estimate) %>% 
    select(-.id) 
    
-bind_rows(ModStats %>% summarise_all(mean) %>% mutate(type = "mean"),
-              ModStats %>% summarise_all(sd) %>% mutate(type = "sd")) %>%
+bind_rows(ModStats %>% group_by(Modelname) %>% summarise_all(mean) %>% mutate(type = "mean"),
+              ModStats%>% group_by(Modelname) %>% summarise_all(sd) %>% mutate(type = "sd")) %>%
      select(type, everything()) %>%
    #  mutate_if(is.numeric, signif, digits = 2) %>%
 xtable(.,  
@@ -311,24 +337,28 @@ xtable(.,
        label = "tab:ModCoeffs") %>%
    print(type = "latex", file = file.path(FiguresFolder, "ModCoeffs.txt"))
  
-#Create new edge limits using the predictions
+#Create simulations for all the models
+unique(predictions$Modelname) %>% walk(~{
+#Create new edge limits using the predictions 
 NewEdges <- tibble(Link = get.edge.attribute(g, "Link") ) %>%
-  left_join(., predictions) %>%
+  left_join(., predictions %>% filter(Modelname ==.x)) %>%
   mutate(.fitted = ifelse(is.na(.fitted), 1e5, .fitted))
 
 LinModLims <- set_edge_attr(g, "Link.Limit", value = NewEdges$.fitted)
-saveRDS(LinModLims, file.path(PLwd, "LinModLims.rds"))
-
+#saveRDS(LinModLims, file.path(PLwd, "LinModLims.rds"))
 #Generate simulations
 setwd(Saved_Sims)
 
-folder <- "Linear_Model_Limits"
+folder <- paste0("Model_",.x )
 
   if(!file.exists(folder)){
     dir.create(folder)
   }
 
 SaveMultiAttacks(LinModLims, DeleteOrders, folder, TotalAttackRounds = AttackRounds, CascadeMode = T)
+
+}
+)
 
 ```
 
@@ -357,13 +387,14 @@ Plots simple graphs from summary data
 ```{r}
 
 SummaryofGC<- AttackRoundData %>%
-  SummariseMultiAttack%>%
-  mutate(PercNum = NodesAttacked/958,
+  mutate(GridLoading = ifelse(Blackout==1, 0, GridLoading)) %>% #After redoing all the extract stats remove this line
+  SummariseMultiAttack(., groupingvar = alpha) %>%
+  mutate(PercNum = NodesAttacked/vcount(g),
          alpha = sub("alpha_value_", "", alpha) %>% sub("_", " ", .))
 
 
 PNodeDens <-  AttackRoundData %>%
-  mutate(PercNum = round(NodesAttacked*100/958),
+  mutate(PercNum = round(NodesAttacked*100/vcount(g)),
             LoadDrop = (first(GridLoading)-GridLoading)/first(GridLoading))
 
 
@@ -385,7 +416,8 @@ PNodeDens <-  AttackRoundData %>%
 
 
  NodeCollapse <- rbind(SummaryofGC %>%
-  select(PercNum, mean, alpha, GC05, GC95, sd) %>% mutate(type = "Giant componant size reduction"),
+  select(PercNum, mean, alpha, GC05, GC95, sd) %>% 
+    mutate(type = "Giant componant size reduction"),
 SummaryofGC %>% 
   select(PercNum, mPGfract, alpha, PG05, PG95, sdPGfract) %>% 
   mutate(type = "Blackout size") %>%
@@ -864,7 +896,7 @@ AttackStratRoundData %>% #need to remove infinte values
   facet_wrap(~alpha) +
   scale_x_continuous(labels=scales::percent) + 
   scale_y_continuous(labels=scales::percent) +
-  coord_cartesian(x = c(0,0.3)) +
+  coord_cartesian(x = c(0,0.2)) +
   labs(title = "Change in Blackout size as nodes are attacked using multiple strategies" , 
        x = "Percent of elements attacked", 
        y = "Performance drop",
@@ -885,7 +917,7 @@ test2 <-AttackStratRoundData %>%
             r2= as.factor(rankblack.y)
     ) %>% ungroup
 
-MapPairs <- expand.grid(unique(test2$simulationID),unique(test2$alpha) ) %>%
+MapPairs <- expand.grid(unique(AttackStratRoundData$simulationID),unique(AttackStratRoundData$alpha) ) %>%
   as_tibble()
 
 #calc error
@@ -912,10 +944,11 @@ test3 <- map2_df(.x= MapPairs$Var1, .y=MapPairs$Var2, ~{
   
 
 test2 %>%
-  filter(alpha == "alpha value 5", simulationID=="Elec_Centrality") %>%
+#  filter(alpha == "alpha value 5", simulationID=="Elec_Centrality") %>%
 mutate(rankdiff = rankblack.x -rankblack.y) %>%
-  ggplot(.,aes(x = NodesAttacked, y = rankdiff)) + geom_line() +
-  labs(title= "Damage rank difference for Electrical centrality for alpha = 5\n rank difference of 0 means rank matches real results")
+  ggplot(.,aes(x = NodesAttacked, y = rankdiff, colour = alpha)) + geom_line() +
+  labs(title= "Damage rank difference for Electrical centrality for alpha = 5\n rank difference of 0 means rank matches real results")+
+  facet_wrap(simulationID ~.)
 
 
 test3 %>%
