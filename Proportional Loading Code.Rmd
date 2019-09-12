@@ -7,17 +7,19 @@ editor_options:
   chunk_output_type: console
 ---
 
+This script is for the PhD chapter/paper on proportional grid loading.
+
+The goal of this paper is to compare real and proportional line limits and see what affect this has on cascading failures in the power-grid during attack.
+
+
 #THIS WEBSITE IS AMAZING
 The most geeky photo graphwebsite ever turns out eccles is a tiny place in the scottish borders
 https://www.geograph.org.uk/photo/297432
 http://wikimapia.org/19551645/Amersham-Main-Sub-Station
 
-This script is for the PhD chapter/paper on proportional grid loading.
-
-The goal of this paper is to compare real and proportional line limits and see what affect this has on cascading failures in the power-grid during attack.
-
 Open data on powergrid modelling
 https://www.sciencedirect.com/science/article/pii/S2352484716300877#f000005
+https://wiki.openmod-initiative.org/wiki/Transmission_network_datasets
 
 
 There are 4 lines which are overloaded from the beginning they are given artificial line limits to maintain grid integrity
@@ -56,7 +58,7 @@ select <- dplyr::select
 
 basewd <- "/home/jonno/Dropbox/Jonathan_Bourne_Phd_Folder"
 datafile <- "/home/jonno/Dropbox/Jonathan_Bourne_Phd_Folder/ETYSAppendixB"
-LatexFolder <- "/home/jonno/Dropbox/Apps/ShareLaTeX/Proportional Line Limits" 
+LatexFolder <- "/home/jonno/Dropbox/Apps/ShareLaTeX/Proportional Loading Chaos"#"/home/jonno/Dropbox/Apps/ShareLaTeX/Proportional Line Limits" 
 FiguresFolder <- file.path(LatexFolder, "Figures")
 TablesFolder <- file.path(LatexFolder, "Tables")
 MatricesFolder <- file.path(LatexFolder, "Matrices")
@@ -120,9 +122,8 @@ saveRDS(DeleteOrders, file.path(PLwd, filename))
                           breaks = c(1,2,7,20,50),
                           trans = "log",
                           values = scales::rescale((c(0, 6, 7, 20, 50))),
-                          name = expression(alpha*" level")) #"Alpha value"
+                          name = "\u03B1 level") #"Alpha value"
 ```
-
 #Comparison of line limit methods
 
 This section compares artificial line limits created using a variety of metrics
@@ -199,11 +200,11 @@ LabelNames[1:2] <- c("", ">10")
    ggplot(aes(x = LoadLevel)) + 
    geom_histogram(bins = 10, aes(y = (..count..)/sum(..count..)))+ #remove the fill to make it black again , fill = rev(AccBarCol[-c(1:2)])
   scale_y_continuous(labels = scales::percent, breaks = seq(0,.5, by= 0.05)) +
-   labs(x = expression(alpha*" level"), 
+   labs(x = "\u03B1 level", 
         y ="Percentage of total lines", 
-        title = expression("Distribution of "*alpha*" using real line limits under initial conditions")) +
+        title = "Distribution of tolerance \u03B1 using real line limits under initial conditions") +
    scale_x_reverse(breaks = seq(1,-.1, by=-0.1), labels= rev(LabelNames))
- ggsave(file.path(FiguresFolder,"LoadLevel.pdf"))
+ ggsave(file.path(FiguresFolder,"LoadLevel.pdf"), device=cairo_pdf)
 
 #Calculating the mean alpha level by inverting the load level removes the most wildly massive alpha scores
 1/mean(abs(edges$PowerFlow/edges$Link.Limit))
@@ -282,23 +283,7 @@ alpha_vector %>% walk(~{
 
 ##Modelled limits
 
-```{r}
-ModelInputVars %>%
-  ggplot(aes(x = Link.Limit)) + geom_density()
-
-table(ntile(ModelInputVars$Voltage,3),ntile(ModelInputVars$Link.Limit,3))
-
-table(ntile(ModelInputVars$Voltage,3),ntile(ModelInputVars$Length,3))
-
-table(ntile(ModelInputVars$Link.Limit,4),ntile(ModelInputVars$Elec_Centrality,4))
-
-table(ntile(ModelInputVars$Link.Limit,4), ntile(ModelInputVars$absPF,4), ntile(ModelInputVars$Voltage,3))
-
-table(ntile(ModelInputVars$absPF,4), ntile(ModelInputVars$Voltage,3), ntile(ModelInputVars$Link.Limit,2))
-
-```
-
-
+set up the model info
 ```{r}
 
 #Set seed and create model input variables
@@ -310,15 +295,23 @@ ModelInputVars <- g %>% as_data_frame %>% left_join(.,  ElectricalCentrality(g)$
          Centrality =log10(edge_betweenness(g)+1),
          LengthQuart = ntile(Length, 4),
          absPFQuart = ntile(absPF, 4),
-         LogLink.Limit = log10(Link.Limit)) 
+         LogLink.Limit = log10(Link.Limit),
+         Voltage_num = as.character(Voltage) %>% as.numeric(),
+         log10PF = log10(absPF),
+         log10PF2 = log10PF^2) 
+
 
 #Create set of formula to model line limits
 FormulaDF <- formulas(~LogLink.Limit, 
-         Voltage_Only = ~ Voltage,
-         VoltageLength = ~ Voltage + Length,
-         VoltElecCent = ~ Voltage + Elec_Centrality,
-         VoltPF = ~ Voltage + absPF,
-         PF_Only = ~ absPF ) %>%
+                      Voltage_Only = ~ Voltage,
+                      VoltageLength = ~ Voltage + Length,
+                      VoltElecCent = ~ Voltage + Elec_Centrality,
+                      VoltPF_cat = ~ Voltage + absPF,
+                      VoltPF = ~ Voltage_num + absPF,
+                      PF_Only = ~ absPF,
+                      #Y_Volt = ~ Y + Voltage_num,
+                  #    Kim_Volt = ~log10PF+ log10PF2 + Voltage_num
+                      ) %>%
   tibble(formulas = .) %>%
   mutate(names = names(formulas)) 
 
@@ -354,7 +347,7 @@ ModError<- unique(predictions$Modelname) %>% map_df(~{
 
 ModError %>%
   select(Model = Modelname,  Rsq = rsq, RMSE =rmse, MAPE) %>%
-  slice(4:5) %>%
+  slice(5,6) %>%
   mutate(Model = c("Volt Power-Flow", "Power-Flow")) %>%
 xtable(.,  
        caption = "Accuracy of modelling line-limits", 
@@ -381,24 +374,180 @@ ModStats <- models %>%
 ModStats %>% group_by(Modelname) %>% summarise_all(mean) %>%
   slice(c(1,5)) %>%
   select(-Elec_Centrality,-Length) %>%
-  mutate(absPF = absPF*1e4,
+  mutate(absPF = absPF*1e3,
+         Voltage_num = Voltage_num*1e3,
          Modelname = case_when(
            Modelname == "PF_Only" ~ "PF Model",
            TRUE ~ "PF & Voltage Model"
          )) %>%
   gather(key = Coefficients, value = value2, -Modelname) %>%
   spread(key = Modelname, value = value2) %>%
+  slice(1:3) %>%
   mutate(Coefficients = case_when(
-    Coefficients == "absPF" ~"PF (in 1000s)",
+    Coefficients == "absPF" ~"PF (MW)",
     Coefficients == "(Intercept)" ~ "Intercept",
-    Coefficients == "Voltage275" ~"Voltage 275",
-    TRUE ~"Voltage 400"
-  )) %>%
+    TRUE ~ "Voltage (kV)")) %>%
+#This code was removed when the model was changed from catagorical to numeric
+#   mutate(Coefficients = case_when(
+#     Coefficients == "absPF" ~"PF (in 1000s)",
+#     Coefficients == "(Intercept)" ~ "Intercept",
+#     Coefficients == "Voltage275" ~"Voltage 275",
+#     TRUE ~"Voltage 400"
+#   )) 
 xtable(.,  
        caption = "Mean model coefficients from 10-fold cross-validation", 
        label = "tab:ModCoeffs") %>%
    print(type = "latex", file = file.path(FiguresFolder, "ModCoeffs.txt"))
 
+ModStats %>% group_by(Modelname) %>% summarise_all(mean)
+
+
+cor(test$PF, test$VoltPF)
+
+test %>%
+  ggplot(aes(x = PF, y = VoltPF)) + geom_point() + scale_x_log10() + scale_y_log10()
+
+#Volt PF coefficients
+ModStats %>% group_by(Modelname) %>% summarise_all(mean) %>%
+  slice(5) %>%
+  select(Intercept = `(Intercept)`, absPF, Voltage_num) %>%
+  gather() %>%
+  pull(value)
+
+
+ModStats %>% group_by(Modelname) %>% summarise_all(mean) %>%
+  slice(1) %>%
+  select(Intercept = `(Intercept)`, absPF) %>%
+  gather() %>%
+  pull(value)
+
+test_g_Volt<- Line_Limit_Volt_PF(g, "PowerFlow", "Voltage", Line_Limit = "Line_Limit2")
+
+
+test_g_PF <- Line_Limit_PF(g, "PowerFlow", Line_Limit = "Limit2")
+
+test_models_Volt = tibble( 
+  Line_Limit_true = get.edge.attribute(test_g_Volt, "Link.Limit"),
+  Line_limit_pred = get.edge.attribute(test_g_Volt, "Line_Limit2"),
+        Voltage = get.edge.attribute(test_g_Volt, "Voltage") %>% as.factor) %>%
+  mutate(type = "Volt PF")
+
+test_models_PF = tibble( 
+  Line_Limit_true = get.edge.attribute(test_g_PF, "Link.Limit"),
+  Line_limit_pred = get.edge.attribute(test_g_PF, "Limit2"),
+        Voltage = get.edge.attribute(test_g_PF, "Voltage") %>% as.factor) %>%
+  mutate(type = "PF")
+
+test_models <- bind_rows(test_models_PF, test_models_Volt) %>%
+  mutate(diff = Line_limit_pred-Line_Limit_true)
+
+test_models %>%
+  ggplot(aes(x = Line_limit_pred, y = Line_Limit_true)) + geom_line() +
+  facet_grid(~type)
+  
+test_models %>%
+  ggplot(aes(x = log(diff))) + geom_density()+
+  facet_grid(~type)
+
+
+ModelInputVars %>%
+  select(`Line Limit` = Link.Limit,`Log Limit` = LogLink.Limit, Voltage) %>%
+  gather(key = key, value = value, -Voltage) %>%
+  ggplot(aes(x = value, colour = Voltage, fill = Voltage)) + geom_density(alpha = 0.2) + 
+  facet_wrap(~key, scales = "free") +
+  labs(title = "Line limit distribution before and after log 10 transformation",
+       y = "Density", x = "Value")
+
+ ggsave(file.path(FiguresFolder,"Limit_distribution_volt.pdf"), device=cairo_pdf)
+
+ModStats %>%
+  filter(Modelname %in% c("VoltPF", "PF_Only")) %>%
+  select(Modelname, absPF, Voltage_num) %>%
+  gather(key = variable, value = value, -Modelname) %>%
+  mutate(variable = ifelse("absPF"==variable, "Absolute Power Flow", "Voltage"),
+         Modelname = ifelse(Modelname =="PF_Only", "PF", "Volt PF")
+         ) %>%
+  ggplot(aes(x = variable, y = value, colour = Modelname, fill = Modelname)) + 
+  geom_boxplot() +
+  labs(title = "Box plot of coefficients across the 10 cross-validation folds",
+       y = "Coefficient",
+       x = "Variable")
+
+ ggsave(file.path(FiguresFolder,"Coefficient_boxplot.pdf"), device=cairo_pdf)
+ 
+test_models %>%
+  ggplot(aes(x = diff/Line_Limit_true, colour = Voltage, fill = Voltage)) +geom_density( alpha = 0.2 )+ #geom_histogram(position = "dodge") +
+  facet_grid(~type)  +
+  coord_cartesian(xlim = c(-1, 5)) +
+  labs(title = "Percent error density plot of model performance by Voltage",
+       x = latex2exp::TeX("$Percent\\;Error = \\frac{Pred-Truth}{Truth}$"),
+       y = "Density")
+
+ ggsave(file.path(FiguresFolder,"model_error_density_volt.pdf"), device=cairo_pdf)
+
+test_models %>%
+  ggplot(aes(x = diff/Line_Limit_true, y = Line_Limit_true, colour = Voltage)) + geom_point() +
+ # geom_smooth(method = lm, formula = y ~exp(-x), se = FALSE) +
+  facet_grid(~type) +
+  coord_cartesian(xlim = c(-1, 5), ylim = c(0,7000)) +
+  labs(title = "Percent error relative to True Line limits",
+        x = latex2exp::TeX("$Percent\\;Error = \\frac{Pred-Truth}{Truth}$"),
+       y = "True Line Limits")
+
+ ggsave(file.path(FiguresFolder,"model_error_vs_true.pdf"), device=cairo_pdf)
+
+########
+########
+##
+## This section is to make a in the style of kim and mottar 2008
+##
+########
+########
+ 
+kim_mottar <-  ModelInputVars %>%
+   select(C = Link.Limit, L = PowerFlow, Voltage) %>%
+ filter(log10(L)>-0) %>%
+   mutate(LogC = log10(C),
+          LogL = log10(abs(L)),
+          bins = cut_interval(LogL, n = 10))
+   
+test %>%
+  ggplot(aes(x = LogL, y = LogC, colour = Voltage)) + geom_point()+
+  geom_abline(intercept = 0, slope = 1)
+
+kim_mottar_plot <- test %>%
+  bind_rows(., {.} %>% mutate(Voltage = "All")) %>%
+  group_by(bins, Voltage) %>%
+  summarise(
+    LogL = mean(LogL),
+            LogC = mean(LogC),
+    L = mean(L)) 
+
+
+ ggplot(data = kim_mottar_plot,  aes(x = LogL, y = LogC)) + 
+    geom_point(data = kim_mottar_plot %>% filter(Voltage !="All"), aes(colour = Voltage)) +
+    geom_point(data = kim_mottar_plot %>% filter(Voltage =="All"), aes(shape = Voltage)) +
+    geom_smooth(data = kim_mottar_plot %>% filter(Voltage !="All"), aes(colour = Voltage), 
+                se = F, size = 0.5,
+                method = lm, formula = y ~ splines::bs(x, 3)) + 
+     geom_smooth(data = kim_mottar_plot %>% filter(Voltage =="All"), 
+                 colour = "black", se = F, size = 0.5,
+                 ,
+                method = lm, formula = y ~ splines::bs(x, 3)) + 
+  geom_abline(intercept = 0, slope = 1,linetype = 2) +
+    labs(title = "The relationship between Line Limit and Power Flow",
+         y = "Log base 10 of Line Limit",
+         x = "Log base 10 of the Power Flow")
+ ggsave(file.path(FiguresFolder,"kim_mottar_plot.pdf"), device=cairo_pdf)
+ 
+
+ 
+```
+
+
+ 
+
+```{r}
 #Create simulations for all the models
 rev(unique(predictions$Modelname)) %>% walk(~{ #makes the sims used in the paper first
 #Create new edge limits using the predictions 
@@ -425,12 +574,6 @@ SaveMultiAttacks(LinModLims, DeleteOrders, folder, TotalAttackRounds = AttackRou
 test <-tibble(PF = predictions %>% filter(Modelname =="PF_Only") %>% pull(.fitted),
        VoltPF = predictions %>% filter(Modelname =="VoltPF") %>% pull(.fitted),
        )
-
-cor(test$PF, test$VoltPF)
-
-test %>%
-  ggplot(aes(x = PF, y = VoltPF)) + geom_point() + scale_x_log10() + scale_y_log10()
-
 ```
 
 #Extracting stats
@@ -448,8 +591,6 @@ AttackRoundData <- list.files(path = file.path(PLwd,"SummaryData"),
    map_df(~read_rds(.x)) %>%
   mutate(GCfract = ifelse(is.finite(GCfract), GCfract, 1)) #GCfract turns to infinity at the end this needs to be corrected
 
-
-
 ```
 
 #Expand data
@@ -459,7 +600,7 @@ This chunk keeps the times series for as long as at least 1 alpha is collapsing.
 ExpandedDF <- 1:100 %>% map_df(~{
     SimAttack <- AttackRoundData %>%
       filter(simulationID == .x) %>%
-      select(alpha, NodesAttacked) %>% 
+      select(alpha, NodesAttacked) %>%
       mutate(value = 1) %>%
       spread(key = alpha, value) %>%
       gather(key = alpha, value = value, -NodesAttacked) %>%
@@ -480,7 +621,7 @@ AttackRoundDataExpanded2 <- ExpandedDF  %>%
   mutate_if(is.numeric, .funs = ~{ifelse(is.finite(.x), .x, 1)})
 
 AttackRoundDataExpanded <-left_join(AttackRoundDataExpanded, AttackRoundDataExpanded2)
-    
+
 AttackRoundData <- AttackRoundDataExpanded
 
 rm(AttackRoundDataExpanded);rm(AttackRoundDataExpanded2); rm(ExpandedDF)
@@ -512,13 +653,12 @@ PNodeDens <-  AttackRoundData %>%
 
  NodeCollapse <- rbind(SummaryofGC %>%
   select(PercNum, mean, alpha, GC05, GC95, sd) %>% 
-    mutate(type = "Giant componant size reduction"),
+    mutate(type = "Giant component size reduction"),
 SummaryofGC %>% 
   select(PercNum, mPGfract, alpha, PG05, PG95, sdPGfract) %>% 
   mutate(type = "Blackout size") %>%
   rename(mean = mPGfract, GC05 = PG05, GC95 = PG95, sd = sdPGfract)
-) %>% mutate(Target = "Node") %>%
-   filter(alpha != "Constant 105", alpha != "Constant Volt_105" )
+) %>% mutate(Target = "Node")
 
  NodeCollapse2<- NodeCollapse %>%
    filter(!is.na(as.numeric(alpha))) %>%
@@ -561,11 +701,11 @@ AlphaCollapse %>% #need to remove infinte values
   scale_x_continuous(labels=scales::percent) + 
   scale_y_continuous(labels=scales::percent) +
   coord_cartesian(x = c(0,0.5)) +
-  labs(title = "Change in Giant componant and Blackout size as nodes are attacked" , 
+  labs(title = "Change in Giant component and Blackout size as nodes are attacked" , 
        x = "Percent of elements attacked", 
        y = "Performance drop")
  
- ggsave(file.path(FiguresFolder,"GCandBlackoutChange.pdf"))
+ ggsave(file.path(FiguresFolder,"GCandBlackoutChange.pdf"), device=cairo_pdf)
 
 
  AlphaCollapse %>% #need to remove infinte values 
@@ -584,7 +724,7 @@ AlphaCollapse %>% #need to remove infinte values
   scale_y_continuous(labels=scales::percent) +
   coord_cartesian(x = c(0,0.5)) +
   labs(title = "Standard deviation of damage across all simulations" , x = "Percent of elements attacked", y = "Standard deviation of damage")
- ggsave(file.path(FiguresFolder,"SDchange.pdf"))
+ ggsave(file.path(FiguresFolder,"SDchange.pdf"), device=cairo_pdf)
 
  
 ```
@@ -594,8 +734,8 @@ AlphaCollapse %>% #need to remove infinte values
 ```{r}
  
 NodeCollapse %>%
-   filter(is.finite(sd)) %>%
- # filter(grepl("PF", alpha)|alpha == "Real Limits") %>%
+  # filter(is.finite(sd)) %>%
+  filter(grepl("PF", alpha)|alpha == "Real Limits") %>%
    filter(is.na(as.numeric(alpha)))%>% #need to remove infinte values 
   ggplot(aes(x = PercNum, y =  mean, group = alpha)) + 
   geom_line(aes(colour = alpha), show.legend = TRUE) +  
@@ -627,6 +767,8 @@ NodeCollapse %>%
 This chunk shows that you can infer the mean value of the network by looking at the loading change under attack.
 Probably only about 10% of the network needs to be attacked
 ```{r}
+AlphaOrder <- c("alpha value 1","alpha value 1.05","alpha value 1.1","alpha value 1.2","alpha value 1.5","alpha value 2" ,"alpha value 3","alpha value 5","alpha value 6","alpha value 7","alpha value 10","alpha value 15","alpha value 20","alpha value 50","Topological" ,"PF Model", "Volt PF Model")  
+
 RealAlpha <- AttackRoundData %>%
    group_by(alpha, NodesAttacked) %>%
    summarise(Mean = mean(GridLoading),
@@ -637,8 +779,11 @@ RealAlpha <- AttackRoundData %>%
   filter(PercNum<0.25) 
 
 RealAlpha <- RealAlpha %>%
-  bind_rows(., RealAlpha %>% mutate(Mean = 1/Mean, type = "alpha"))
-
+  bind_rows(., RealAlpha %>% 
+              mutate(Mean = 1/Mean, type = " Tolerance \u03B1")
+            )
+ 
+ 
 RealAlpha %>%
   filter(grepl("alpha", alpha)) %>%
    CleanNames(., "alpha", AlphaOrder) %>%
@@ -651,11 +796,13 @@ RealAlpha %>%
              aes(fill = 'Real'), color = 'black', linetype ="longdash")  +
   scale_x_continuous(labels=scales::percent) + 
   coord_cartesian(x = c(0,0.2))+
-  labs(title =  expression("Mean "*alpha*" value and mean Load level during attack")  , 
+  labs(title = "Mean \u03B1 value and mean load level during attack"  , 
        x = "Percent of elements attacked", 
        y = "Mean grid level") +
-  facet_wrap(~type, scales = "free_y")
- ggsave(file.path(FiguresFolder,"AlphaChange.pdf"))
+  facet_wrap(~type, scales = "free_y"#,
+           #  labeller = label_parsed
+             )
+ ggsave(file.path(FiguresFolder,"AlphaChange.pdf"), device=cairo_pdf)
 
 
  
@@ -686,9 +833,9 @@ RealAlpha %>%
   ggplot(aes(x = alphaNum, y = totdiff))+ geom_line() +
     theme(legend.position = "none", 
         axis.text.x = element_text(angle = 45, hjust = 1)) +
-  labs(x = "Alpha", y = "Sum of max absolute change in alpha and Load", 
-       title = expression("Finding the true load level of a network by measuring the change \nin load level and alpha over and attack"))
- ggsave(file.path(FiguresFolder,"FindTrueAlpha.pdf"))  
+  labs(x = "Tolerance \u03B1", y = "Sum of max absolute change in \u03B1 and load level", 
+       title = "Finding the true load level of a network by measuring the change in load\nlevel and tolerance \u03B1 over an attack")
+ ggsave(file.path(FiguresFolder,"FindTrueAlpha.pdf"), device=cairo_pdf)  
 
 ```
 
@@ -763,6 +910,7 @@ AlphaOrder <- c("alpha value 1","alpha value 1.05","alpha value 1.1","alpha valu
 NumberofRounds %>%
   filter(type== "Node") %>%
   CleanNames(., "alpha", AlphaOrder) %>%
+  mutate(alpha2 = fct_relabel(alpha2, ~gsub("alpha value", "\u03B1 =", .x))) %>% #replace with unicode
   mutate( alpha = ifelse(alpha== "Topological","Inf", alpha),
          alpha = gsub("alpha_value_", "", alpha),
          alpha = as.numeric(alpha)/100
@@ -783,28 +931,30 @@ test %>%
   select(Islanded:Targeted) %>%
   cor
 
- AllRemovedNodes %>%
-    CleanNames(., "alpha", AlphaOrder) %>%
-   filter(!grepl("alpha", alpha)) %>% #don't plot alpha values
+AllRemovedNodes %>%
+  CleanNames(., "alpha", AlphaOrder) %>%
+  mutate(alpha2 = fct_relabel(alpha2, ~gsub("alpha value", "\u03B1 =", .x))) %>% #replace with unicode
+  filter(!grepl("alpha", alpha)) %>% #don't plot alpha values
   group_by(type, alpha2, Sim, RemovalType) %>%
   summarise(counts = n()) %>%
- #bind_rows(., NumberofRounds) %>%
-     filter(type == "Node") %>%
-   ggplot(aes(x = alpha2, y = counts)) + geom_boxplot() + 
-   facet_wrap(RemovalType~type, scales = "free_y")+
-    theme(legend.position = "none", 
+  #bind_rows(., NumberofRounds) %>%
+  filter(type == "Node") %>%
+  ggplot(aes(x = alpha2, y = counts)) + geom_boxplot() + 
+  facet_wrap(RemovalType~type, scales = "free_y")+
+  theme(legend.position = "none", 
         axis.text.x = element_text(angle = 45, hjust = 1)) 
 
- 
-  AllRemovedNodes %>%
-      CleanNames(., "alpha", AlphaOrder) %>%
+
+AllRemovedNodes %>%
+  CleanNames(., "alpha", AlphaOrder) %>%
+  mutate(alpha2 = fct_relabel(alpha2, ~gsub("alpha value", "\u03B1 =", .x))) %>% #replace with unicode
   group_by(type, alpha2, Sim, RemovalType) %>%
   summarise(counts = n()) %>%
-    filter(type == "Node", RemovalType !="Islanded") %>%
-     spread(key = RemovalType, value = counts) %>%
-    rename(Rounds = Targeted) %>%
-ggplot(aes(x = Overloaded, y = Rounds, colour = alpha2))  + geom_point() +
-    ggtitle("Number of Rounds vs number of overloaded nodes")
+  filter(type == "Node", RemovalType !="Islanded") %>%
+  spread(key = RemovalType, value = counts) %>%
+  rename(Rounds = Targeted) %>%
+  ggplot(aes(x = Overloaded, y = Rounds, colour = alpha2))  + geom_point() +
+  ggtitle("Number of Rounds vs number of overloaded nodes")
  
   
 test <-  AllOutcomes %>%
@@ -935,7 +1085,7 @@ AllCombos <- PreCorRemoved  %>% distinct(alpha, Sim)
 #"Infinite Limits"
 AlphaOrder <- c("alpha value 1.05","alpha value 1.1","alpha value 1.2","alpha value 1.5","alpha value 2" ,"alpha value 3","alpha value 5","alpha value 7","alpha value 10","alpha value 15",
                 "alpha value 20","alpha value 50","Topological" ,"PF Model", "Volt PF Model",
-                "Model Volt PF")  
+                "Model Volt PF")
 
 #Pre process data for plot
  AlphavsCor <-  PreAlphavsCor %>% 
@@ -946,10 +1096,12 @@ AlphaOrder <- c("alpha value 1.05","alpha value 1.1","alpha value 1.2","alpha va
            ) %>%
    filter(grepl("PF_Model", alpha)| grepl("Topological", alpha)|grepl("alpha", alpha)|grepl("Volt_PF_Model", alpha)) %>%  
    CleanNames(., "alpha", AlphaOrder) %>%
+      mutate(alpha2 = fct_relabel(alpha2, ~gsub("alpha value", "\u03B1 =", .x))) %>% #replace with unicode
   mutate( alpha = ifelse(alpha== "Topological","Inf", alpha),
          alpha = gsub("alpha_value_", "", alpha),
          alpha = as.numeric(alpha)/100
 )
+ 
  
  #Make temporary plot
  #This is used so that the blue can be added on for the linear line limits
@@ -973,9 +1125,9 @@ AlphavsCor %>%
   scale_y_continuous( breaks = seq(0,1, by= 0.1)) +
   theme(legend.position = "none", 
         axis.text.x = element_text(angle = 45, hjust = 1)) +
-  labs(x = expression(alpha*" level"), y ="Correlation with real line limits", title= "Node removal rank correlation against real limits")
+  labs(x = "Line Limit tolerance", y ="Correlation with real line limits", title= "Node removal rank correlation against real limits")
 
-ggsave(file.path(FiguresFolder, "CorBoxPlot.pdf"))
+ggsave(file.path(FiguresFolder, "CorBoxPlot.pdf"), device=cairo_pdf)
 
 AlphavsCor %>% 
   group_by(alpha2) %>%
@@ -1058,26 +1210,26 @@ BasePlot <- function(df){
   }
 
 AccuracyAnalysis <- AttackRoundData %>%
-     filter(grepl("(alpha)|(Topological)|(PF_Only)|(Real_Limits)|(Model_VoltPF)", alpha)) %>%
-       mutate(alpha = case_when(
-       alpha == "Model_PF_Only"~ "PF_Model",
-       alpha == "Model_VoltPF" ~ "Volt_PF_Model",
-       TRUE ~ alpha)
-       ) 
+  filter(grepl("(alpha)|(Topological)|(PF_Only)|(Real_Limits)|(Model_VoltPF)", alpha)) %>%
+  mutate(alpha = case_when(
+    alpha == "Model_PF_Only"~ "PF_Model",
+    alpha == "Model_VoltPF" ~ "Volt_PF_Model",
+    TRUE ~ alpha)
+  ) 
 
 AccuracyAnalysis %>%
   DamageComparison(., "Blackout", AlphaOrder) %>%
   select(-SimulationID,-alpha) %>%
   group_by(alpha2) %>%
-  summarise_all(funs(mean, median)) %>%
+  summarise_all(list(mean = mean, median = median)) %>%
   arrange(RMSE_mean)
 
 AccuracyAnalysis %>%
-#  filter(is.finite(GCfract)) %>%
+  # filter(is.finite(GCfract)) %>%
   DamageComparison(., "GCfract", AlphaOrder) %>%
   select(-SimulationID,-alpha) %>%
   group_by(alpha2) %>%
-  summarise_all(funs(mean, median)) %>%
+  summarise_all(list(mean = mean, median = median)) %>%
   arrange(RMSE_mean)
 
 SDAnalysis <- AccuracyAnalysis %>%
@@ -1097,17 +1249,20 @@ SDAnalysis %>%
   DamageComparison(., "GCfract", AlphaOrder) %>%
   select(-SimulationID,-alpha) %>%
   group_by(alpha2) %>%
-  summarise_all(funs(mean, median)) %>%
+  summarise_all(list(mean = mean, median = median)) %>%
   arrange(RMSE_mean)
 
 
 AccPlot <- AccuracyAnalysis %>%
-  DamageComparison(., "Blackout", AlphaOrder) %>% BasePlot
+ filter(!grepl("num", alpha)) %>% #removes the numeric model
+  DamageComparison(., "Blackout", AlphaOrder) %>% 
+        mutate(alpha2 = fct_relabel(alpha2, ~gsub("alpha value", "\u03B1 =", .x))) %>% #replace with unicode
+  BasePlot
 
  AccPlot + geom_boxplot(aes(y = RMSE)) +
-  labs(x = expression(alpha*" level"), 
-       title = expression("Blackout RMSE against real line limits for all calculated "*alpha*" levels") )
-ggsave(file.path(FiguresFolder, "RMSEChange.pdf"))
+  labs(x = "\u03B1 level", 
+       title = "Blackout RMSE against real line limits for all calculated \u03B1 levels" )
+ggsave(file.path(FiguresFolder, "RMSEChange.pdf"), device=cairo_pdf)
 
 
 
@@ -1192,6 +1347,31 @@ LinModLims <- set_edge_attr(g, "Link.Limit", value = NewEdges$.fitted)
 SaveMultiAttacks(LinModLims, StratAttackVect, folder, TotalAttackRounds = AttackRounds, CascadeMode = T)
 
 setwd(StratAttackWd)
+folder <- "Model_PFVolt_cat"
+
+  if(!file.exists(folder)){
+    dir.create(folder)
+  }
+
+NewEdges <- tibble(Link = get.edge.attribute(g, "Link") ) %>%
+  left_join(., predictions %>% filter(Modelname =="VoltPF_cat")) %>%
+  mutate(.fitted = ifelse(is.na(.fitted), 1e5, .fitted))
+
+LinModLims <- set_edge_attr(g, "Link.Limit", value = NewEdges$.fitted)
+
+
+SaveMultiAttacks(LinModLims, StratAttackVect, folder, TotalAttackRounds = AttackRounds, CascadeMode = T)
+
+
+############
+############
+#
+#
+#
+############
+############
+
+setwd(StratAttackWd)
 folder <- "Model_PFVolt"
 
   if(!file.exists(folder)){
@@ -1209,6 +1389,9 @@ SaveMultiAttacks(LinModLims, StratAttackVect, folder, TotalAttackRounds = Attack
 
 ```
 
+
+
+
 ##Plot differences
 
 ```{r}
@@ -1218,13 +1401,13 @@ RootFolder <- StratAttackWd
 ExtractAttackStats(StratAttackWd, file.path(PLwd, "Attack_Strategy_SummaryData"))
 
 AttackStratRoundData <- list.files(path = file.path(PLwd,"Attack_Strategy_SummaryData"), 
-                              pattern = ".rds", 
-                              full.names = TRUE) %>%
-   map_df(~read_rds(.x)) %>%
-        mutate(alpha = case_when(
-       alpha == "Model_PF_Only"~ "PF_Model",
-       alpha == "Model_PFVolt" ~ "Volt_PF_Model",
-       TRUE ~ alpha)) %>%
+                                   pattern = ".rds", 
+                                   full.names = TRUE) %>%
+  map_df(~read_rds(.x)) %>%
+  mutate(alpha = case_when(
+    alpha == "Model_PF_Only"~ "PF_Model",
+    alpha == "Model_PFVolt" ~ "Volt_PF_Model",
+    TRUE ~ alpha)) %>%
   mutate(simulationID = case_when(
     simulationID == "1" ~"Degree" ,
     simulationID == "2" ~"EntDeg_LinkLimit",
@@ -1233,23 +1416,26 @@ AttackStratRoundData <- list.files(path = file.path(PLwd,"Attack_Strategy_Summar
     TRUE ~ "Centrality"
   ),
   alpha1 = alpha %>%
-           str_replace_all(., "_", " ") %>%
-           str_extract_all(., "([0-9])+")%>% as.numeric(.)/100,
-alpha = alpha %>%
-  str_replace_all(., "_", " ") %>%
-  str_extract_all(., "([aA-zZ\\s])+", T) %>%
-  paste0(., ifelse(is.na(alpha1), "", alpha1)),
+    str_replace_all(., "_", " ") %>%
+    str_extract_all(., "([0-9])+")%>% as.numeric(.)/100,
+  alpha = alpha %>%
+    str_replace_all(., "_", " ") %>%
+    str_extract_all(., "([aA-zZ\\s])+", T) %>%
+    paste0(., ifelse(is.na(alpha1), "", alpha1)),
   alpha = fct_relevel(alpha, "alpha value 5", after=2) %>%
-  fct_relevel(., "alpha value 2", after=2) %>%
-  fct_relevel(., "alpha value 1.5", after=2),
+    fct_relevel(., "alpha value 2", after=2) %>%
+    fct_relevel(., "alpha value 1.5", after=2),
+  alpha = fct_relabel(alpha, ~gsub("alpha value", "\u03B1 =", .x)),
   PercNum = NodesAttacked/958) %>% 
   group_by(NodesAttacked, alpha) %>%
   mutate(rankblack = min_rank(-Blackout),
          rankGC = min_rank(GCfract)) %>%
   ungroup
 
+     
+
 AttackStratRoundData %>% #need to remove infinte values
-  filter(alpha %in% c("alpha value 5", "Topological", "PF Model", "Real Limits")) %>%
+  filter(alpha %in% c("\u03B1 = 5", "Topological", "PF Model", "Real Limits")) %>%
   ggplot(aes(x = PercNum, y =  GCfract, colour = simulationID)) + 
   geom_line() +  
   #geom_line(data = RealCollapse, aes(fill = 'Real'), color = 'black') +
@@ -1259,12 +1445,12 @@ AttackStratRoundData %>% #need to remove infinte values
   scale_x_continuous(labels=scales::percent) + 
   scale_y_continuous(labels=scales::percent) +
   coord_cartesian(x = c(0,0.2)) +
-  labs(title = "Change in Blackout size as nodes are attacked using multiple strategies" , 
+  labs(title = "Change in blackout size as nodes are attacked using multiple strategies" , 
        x = "Percent of elements attacked", 
        y = "Performance drop",
        colour = "Attack Strategy")+
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
-ggsave(file.path(FiguresFolder,"AttackStratDiff.pdf"))
+ggsave(file.path(FiguresFolder,"AttackStratDiff.pdf"), device=cairo_pdf)
 
 test2 <-AttackStratRoundData %>%
   left_join(., 
@@ -1305,25 +1491,6 @@ test3 <- map2_df(.x= MapPairs$Var1, .y=MapPairs$Var2, ~{
   filter(alpha!="Real Limits")
   
 
-test2 %>%
-#  filter(alpha == "alpha value 5", simulationID=="Elec_Centrality") %>%
-mutate(rankdiff = rankblack.x -rankblack.y) %>%
-  ggplot(.,aes(x = NodesAttacked, y = rankdiff, colour = alpha)) + geom_line() +
-  labs(title= "Damage rank difference for Electrical centrality for alpha = 5\n rank difference of 0 means rank matches real results")+
-  facet_wrap(simulationID ~.)
-
-
-test3 %>%
-  ggplot(., aes(x = simulationID, y = accuracy, fill = simulationID)) +
-  geom_col() +
-  facet_wrap(~alpha) +
-  theme(axis.text.x = element_blank()) +
-    labs(title= "The overall rank accuracy in terms of damage done\nby line limit setting and Attack strategy", 
-       y = "Damage rank accuracy across entire simulation",
-       x = "Attack Strategy"
-      ) +
-  guides(fill = guide_legend(title = "Attack Strategy"))
-
 test <- test3 %>%
   mutate(alpha1 = alpha %>%
            str_replace_all(., "_", " ") %>%
@@ -1331,29 +1498,29 @@ test <- test3 %>%
 
 test %>%
   group_by(alpha, alpha1) %>%
-  summarise(Accuracy = first(AlphaRMSE)) %>% 
+  summarise(Error = first(AlphaRMSE)) %>% 
   ungroup %>%
-  arrange(Accuracy)
+  arrange(Error)
 
 
 
  test %>%
+   filter(!grepl("num", alpha)) %>%
   group_by(alpha, alpha1) %>%
   summarise(Accuracy = first(AlphaRMSE)) %>% #AlphaAccuracy
    ungroup %>%
    mutate(
-    # alpha = ifelse(alpha == "Model PFVolt", "PF Volt Model", alpha),
-     alpha = factor(alpha, levels = AlphaOrder)) %>%
+     alpha = fct_relevel(alpha, "PF Model", after = 10)
+) %>%
   ggplot(aes(x= alpha, y = Accuracy)) +
   geom_col() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))+
-   labs(title= "The overall strategy rank RMSE in terms of damage done by alpha level", 
+   labs(title= "The overall strategy rank RMSE in terms of damage done, ordered by tolerance \u03B1", 
        y = "Strategy damage rank RMSE across entire simulation",
        x = "Line limit settings") 
-ggsave(file.path(FiguresFolder,"AttackStratRankPerf.pdf")) 
+ggsave(file.path(FiguresFolder,"AttackStratRankPerf.pdf"), device=cairo_pdf) 
    
- #this looks like a better way of showing the data... but the simulations have different numbers of attacks so it may not be appropriate.
-
+ 
 TempPlot<- test %>%
   group_by(alpha, alpha1) %>%
   summarise(Accuracy = first(AlphaAccuracy)) %>% #AlphaAccuracy
@@ -1387,8 +1554,33 @@ test %>% select(alpha, accuracy, RMSE) %>%group_by(alpha) %>% summarise_all(funs
 
 ###GGplot map
 
+
+```{r}
+
+test <- StratAttackVect %>% gather(key = order, value = Node, -SimulationID) %>%
+  mutate(SimulationID = gsub("Simulation_ID_", "", SimulationID),
+         SimulationID = case_when(
+    SimulationID == "1" ~"Degree" ,
+    SimulationID == "2" ~"EntDeg_LinkLimit",
+    SimulationID == "3" ~"EntDeg_PowerFlow",
+    SimulationID == "4" ~"Elec_Centrality",
+    TRUE ~ "Centrality"
+  ),
+  order = sub("Target", "", order) %>% as.integer())
+
+```
+
+
 ```{r}
 GGmapData <-  MakeMapDF(g, read_csv(file.path(basewd, "point.csv")))  
+
+
+test2 <- GGmapData %>% left_join(test)
+
+test  %>%
+  spread(key = SimulationID, value = order) %>% 
+  select(-Node) %>%
+  cor
 
 #plot graph as ggplot
 GGmapData %>%
@@ -1406,8 +1598,24 @@ GGmapData %>%
         axis.text.y=element_blank(),
         axis.ticks.y=element_blank()) +
   ggtitle("The UK power grid by voltage, plotted using geographic location and node space")
-ggsave(file.path(FiguresFolder, "ggMapColouredEdges.pdf"))
-  
+ggsave(file.path(FiguresFolder, "ggMapColouredEdges.pdf"), device=cairo_pdf)
+
+unique(test2$SimulationID)
+
+version <- unique(test2$SimulationID)[1]
+
+test2 %>%
+  filter(SimulationID== version) %>%
+  mutate(Voltage = factor(Voltage),
+         PositionType = factor(PositionType),
+         PositionType = fct_relevel(PositionType, "Geo Space", after = 0)) %>%
+  ggplot(aes(y = Latitude, x = Longitude)) + 
+  geom_line(aes( group = Link)) +
+    geom_point(aes(colour = order)) +
+   scale_colour_viridis_c()+
+  facet_grid(~PositionType) +
+  ggtitle(version)
+
 ```
 
 
