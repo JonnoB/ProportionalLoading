@@ -7,3 +7,5 @@ To run this code download or clone the repo as well as the [Power Grid Networkin
 **N.B** Note that the core dataset of this paper is not publicly available. please use either your own dataset or [Electricity Ten Year Statement (ETYS)](https://www.nationalgrideso.com/insights/electricity-ten-year-statement-etys) or [IEEE](https://icseg.iti.illinois.edu/power-cases/) example datasets. This will involve a bit of wrangling.
 
 The results of this script also form a chapter of my PhD.
+
+Please use the master version of PowerGridNewtworking from 24-10-19 or earlier. Later versions may not work correctly or as expected.
