@@ -24,18 +24,6 @@ https://wiki.openmod-initiative.org/wiki/Transmission_network_datasets
 
 There are 4 lines which are overloaded from the beginning they are given artificial line limits to maintain grid integrity
 
-#Potential journals
-
-Criticital infrastructure protection is the preffered
-
-https://www.journals.elsevier.com/international-journal-of-critical-infrastructure-protection/
-
-
-https://www.journals.elsevier.com/international-journal-of-electrical-power-and-energy-systems  
-
-https://www.journals.elsevier.com/electric-power-systems-research/
-
-
 #Setup Block
 
 ```{r}
@@ -76,7 +64,7 @@ source(file.path("/home/jonno/ProportionalLoading", "CreateGBase.R"))
 list.files("/home/jonno/Useful_PhD__R_Functions", pattern = ".R", full.names = T) %>%
   walk(~source(.x))
 
-#FOr NetSci
+#For NetSci
 #FiguresFolder <- "/home/jonno/Dropbox/Apps/ShareLaTeX/NetSci2018 Poster/Figures"
 
 
